@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="c493d807-f370-478c-930d-0af027113142" name="s">
+        <fileTransfer rootFolder="/home/s/chaunm/CPS_landmarks" accessType="SFTP" host="localhost" port="2222" sshConfigId="9f6dd03c-4395-4dcb-a70a-9b1b807ccc9a" sshConfig="s@localhost:2222 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" keepAliveTimeout="0" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>
