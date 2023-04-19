@@ -8,8 +8,24 @@ from scipy.io import loadmat
 from termcolor import colored
 from config.config import get_config
 from utils.utils import InfiniteDataLoader
+from albumentations.augmentations.geometric.rotate import Rotate
+from albumentations.augmentations.geometric import functional as F
+from albumentations.augmentations.crops import functional as FCrops
 
 config = get_config(train=False)
+
+
+class RandomRotate(Rotate):
+    def __init__(self, *args, **kwargs):
+        super(RandomRotate, self).__init__(*args, **kwargs)
+        # print(dir(self))
+        # exit(0)
+
+    def apply_to_mask(self, img, angle=0, x_min=None, x_max=None, y_min=None, y_max=None, **params):
+        img_out = F.rotate(img, angle, cv2.INTER_LINEAR, self.border_mode, self.mask_value)
+        if self.crop_border:
+            img_out = FCrops.crop(img_out, x_min, y_min, x_max, y_max)
+        return img_out
 
 
 def normalize(img, mean, std):
@@ -25,27 +41,35 @@ class TrainPreprocessing:
         self.mean = mean
         self.std = std
         self.transforms = A.Compose([
-            A.Rotate(30, p=0.5),
-            A.RandomBrightnessContrast(p=0.5),
+            RandomRotate(30, p=0.5),
             A.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1, p=0.5),
             # A.HorizontalFlip(p=0.5),
-            # A.RandomRotate90(p=0.5),
+            A.GaussianBlur(p=0.2, blur_limit=3),
             A.ToGray(p=0.5),
+
+        ], keypoint_params=A.KeypointParams(format='xy', remove_invisible=False))
+        self.transforms_unsup = A.Compose([
+            RandomRotate(30, p=0.5),
+            A.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1, p=0.5),
+            # A.HorizontalFlip(p=0.5),
+            A.GaussianBlur(p=0.2, blur_limit=3),
+            A.ToGray(p=0.5),
+
         ])
 
-    def __call__(self, image, heatmap=None):
+    def __call__(self, image, heatmap=None, landmark=None):
         if heatmap is None:
-            image = self.transforms(image=image)['image']
+            output = self.transforms_unsup(image=image)
+            image = output['image']
         else:
-            output = self.transforms(image=image, mask=heatmap)
+            output = self.transforms(image=image, mask=heatmap, keypoints=landmark)
             image = output['image']
             heatmap = output['mask']
+            landmark = np.array(output['keypoints'], dtype=np.int)
             heatmap = heatmap.transpose(2, 0, 1).astype(np.float32)
-
         image = normalize(image, self.mean, self.std)
         image = image.transpose(2, 0, 1).astype(np.float32)
-
-        return image, heatmap
+        return image, heatmap, landmark
 
 
 class ValPreprocessing:
@@ -53,13 +77,13 @@ class ValPreprocessing:
         self.mean = mean
         self.std = std
 
-    def __call__(self, image, heatmap=None):
+    def __call__(self, image, heatmap=None, landmark=None):
         image = normalize(image, self.mean, self.std)
         image = image.transpose(2, 0, 1).astype(np.float32)
         if heatmap is not None:
             heatmap = heatmap.transpose(2, 0, 1).astype(np.float32)
 
-        return image, heatmap
+        return image, heatmap, landmark
 
 
 def get_train_loader(unsupervised=False):
@@ -147,15 +171,15 @@ class AFLW(data.Dataset):
         image = cv2.imread(os.path.join(self.image_path, image_name))
 
         if not self.unsupervised:
-            landmark = annotation['landmark']
+            landmark = annotation['landmark'].astype(np.int)
             heatmap = annotation['heatmap']
             headpose = annotation['headpose']
             mask_heatmap = annotation['mask_heatmap']
             if self.transforms is not None:
-                image, heatmap = self.transforms(image, heatmap)
+                image, heatmap, landmark = self.transforms(image, heatmap, landmark)
             return {'image': image, 'heatmap': heatmap, 'landmark': landmark, 'headpose': headpose,
                     'mask_heatmap': mask_heatmap}
         else:
             if self.transforms is not None:
-                image, heatmap = self.transforms(image, heatmap)
+                image, _, _ = self.transforms(image, heatmap, None)
             return {'image': image}

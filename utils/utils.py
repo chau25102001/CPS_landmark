@@ -3,6 +3,7 @@ import math
 import torch.utils.data as data
 import torch
 from config.config import get_config
+import torch.nn as nn
 
 config = get_config(train=False)
 
@@ -76,9 +77,10 @@ def heatmap2coordinate(heatmap):
     '''heatmap: Bsize x (K+1) x H x W'''
     b, k, h, w = heatmap.shape
     heatmap = heatmap.view(b, k, -1)
-    _, index = pool(heatmap)
+    index = torch.argmax(heatmap, dim=-1, keepdim=True)
     # _, index = torch.max(heatmap, dim=-1, keepdim=True)
     index = index[:, :-1, :]  # ignore background channel
+    # print(index)
     xs = index % w
     ys = index // h
     landmarks = torch.cat([xs, ys], dim=-1)  # Bsize x K x 2
@@ -94,7 +96,7 @@ def local_filter(logits, confidence_threshold=0.7):
     '''
     b, k, h, w = logits.shape
     logits = logits.view(b, k, -1)
-    max_values, _ = pool(logits)  # bsize x (K + 1) x 1
+    max_values, _ = torch.max(logits, dim=-1, keepdim=True)  # bsize x (K + 1) x 1
     mask = torch.where(max_values >= confidence_threshold, 1., 0.)
     return mask
 
@@ -105,7 +107,7 @@ class NME(torch.nn.Module):
         self.h = h
         self.w = w
 
-    def forward(self, pred, gt, mask):
+    def forward(self, pred, gt, mask=None):
         '''
 
         :param pred: bsize x k x 2
@@ -117,17 +119,37 @@ class NME(torch.nn.Module):
             pred = heatmap2coordinate(pred).float()
         if len(gt.shape) == 4:  # heatmap
             gt = heatmap2coordinate(gt).float()
-        # print(pred[0])
-        # print(gt[0])
-        # pred[:, :, 0] /= self.w
-        # pred[:, :, 1] /= self.h
-        # gt[:, :, 0] /= self.w
-        # gt[:, :, 1] /= self.h
-        # if mask[0][-1] == 0:
-        #     print(pred, gt, mask)
+        norm = gt.shape[1]
         if mask is None:
             mask = 1
-        loss = torch.sum((pred - gt) ** 2, dim=-1) * mask / math.sqrt(self.w * self.h)
-        # loss = dis / self.h
-        loss = torch.mean(torch.sum(loss, dim=1) / torch.sum(mask, dim=1)) * 100
+        else:
+            norm = torch.sum(mask, dim=1)
+        loss = torch.sqrt(torch.sum((pred - gt) ** 2, dim=-1)) * mask / math.sqrt(self.w * self.h)
+        loss = torch.mean(torch.sum(loss, dim=1) / norm) * 100  # mean over batch
         return loss
+
+
+def freeze_bn(model: torch.nn.Module):
+    for m in model.modules():
+        if isinstance(m, nn.BatchNorm2d):
+            m.track_running_stats = False
+            m.eval()
+
+
+def unfreeze_bn(model: torch.nn.Module):
+    for m in model.modules():
+        if isinstance(m, nn.BatchNorm2d):
+            m.track_running_stats = True
+            m.train()
+
+
+if __name__ == "__main__":
+    norm = torch.nn.BatchNorm2d(num_features=3)
+    a = torch.rand(5, 3, 128, 128)
+    out = norm(a)
+    print(norm.running_mean)
+    out = norm(a)
+    print(norm.running_mean)
+    freeze_bn(norm)
+    out = norm(a)
+    print(norm.running_mean)

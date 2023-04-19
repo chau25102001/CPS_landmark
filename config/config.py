@@ -59,16 +59,19 @@ def get_config(train=True):
     C.train_text_labeled = '/home/s/chaunm/CPS_landmarks/data/split/train_labeled_1_4.txt'
     C.train_text_unlabeled = '/home/s/chaunm/CPS_landmarks/data/split/train_unlabeled_1_4.txt'
     C.test_text = '/home/s/chaunm/CPS_landmarks/data/split/test.txt'
-    C.train_annotations_path = '/home/s/chaunm/DATA/AFLW/train_128_3/annotations'
-    C.train_images_path = '/home/s/chaunm/DATA/AFLW/train_128_3/images'
-    C.test_annotations_path = '/home/s/chaunm/DATA/AFLW/test_128_3/annotations'
-    C.test_images_path = '/home/s/chaunm/DATA/AFLW/test_128_3/images'
+    C.train_annotations_path = '/home/s/chaunm/DATA/AFLW/train_128_4/annotations'
+    C.train_images_path = '/home/s/chaunm/DATA/AFLW/train_128_4/images'
+    C.test_annotations_path = '/home/s/chaunm/DATA/AFLW/test_128_4/annotations'
+    C.test_images_path = '/home/s/chaunm/DATA/AFLW/test_128_4/images'
     C.ratio = C.train_text_labeled.split("/")[-1].replace('.txt', '').replace('train_labeled_', '')
     '''DATASET CONFIG'''
     C.mean = [0.485, 0.456, 0.406]
     C.std = [0.229, 0.224, 0.225]
-
+    C.mask_distance = False
     '''MODEL CONFIG'''
+    # C.model = 'segformer'
+    # C.model_size = 'b3'
+
     C.model = 'resnet'
     C.model_size = '18'
     C.num_classes = 20  # 20 classes including background
@@ -83,6 +86,7 @@ def get_config(train=True):
     C.loss_weight = 1
     C.use_aux_loss = False
     C.cps_loss_weight = 1.5
+    C.use_weighted_mask = False  # for a wing loss
     '''EMA config'''
     C.threshold = 0.7
     C.ema_decay = 0.5
@@ -93,11 +97,13 @@ def get_config(train=True):
     C.test_batch_size = 32
     C.num_workers = 8
     C.labeled_epoch = 0
-    C.joint_epoch = 45  # change with ratio
+    C.joint_epoch = 30  # change with ratio
     C.lr = 1e-3
     C.weight_decay = 1e-5
     C.momentum = 0.99
     C.device = 'cuda:0'
+    C.warm_up_epoch = 3
+    # C.device = 'cpu'
     if C.joint_epoch == 0:
         C.mode = 'fully_supervised_' + C.ratio
     elif C.mean_teacher:
@@ -108,6 +114,7 @@ def get_config(train=True):
 
     C.snapshot_dir = os.path.join(C.log_dir, 'snapshot', C.name)
     C.snapshot_dir = makedir(C.snapshot_dir, makedir=train, make_if_exist=True)
+    C.name = C.snapshot_dir.split("/")[-1]
     if train:
         with open(os.path.join(C.snapshot_dir, 'config.json'), 'w') as f:
             json.dump(config, f, indent=4)

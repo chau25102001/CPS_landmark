@@ -13,9 +13,11 @@ class MeanTeacher_CPS(nn.Module):
         self.teacher_branch2 = SingleNetwork(num_classes, model_size, model)
 
         for param in self.teacher_branch1.parameters():
+            param.requires_grad = False
             param.detach_()
 
         for param in self.teacher_branch2.parameters():
+            param.requires_grad = False
             param.detach_()
 
         for t_param, s_param in zip(self.teacher_branch1.parameters(), self.branch1.parameters()):

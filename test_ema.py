@@ -15,12 +15,52 @@ import warnings
 from argparse import ArgumentParser
 from tqdm import tqdm
 from termcolor import colored
+import torch.nn.functional as F
 
 parser = ArgumentParser(description="testing")
 parser.add_argument("--mode", type=str, default='joint', help='joint or channel')
 args = parser.parse_args()
 warnings.filterwarnings('ignore')
 config = get_config(train=False)
+
+
+# config.device = 'cpu'
+# print(config.device)
+
+def soft_argmax(heatmap):
+    """
+    Apply soft argmax on a given heatmap tensor to compute landmark coordinates.
+    Args:
+        heatmap: PyTorch tensor of shape B x C x H x W representing the heatmap.
+    Returns:
+        landmark: PyTorch tensor of shape B x C x 2 representing the landmark coordinates.
+    """
+    device = heatmap.device
+    # print(heatmap.shape)
+    batch_size, channels, height, width = heatmap.shape
+    softmax = F.softmax(heatmap.view(batch_size, channels, -1) * 128 * 128, dim=-1).view(batch_size, channels, height,
+                                                                                         width)
+
+    indices_kernel = torch.arange(start=0, end=height * width).unsqueeze(0).view(height
+                                                                                 , width)
+    # Create a grid of coordinates
+    conv = softmax * indices_kernel
+    indices = conv.sum(2).sum(2)  # B x C
+    # print(indices)
+    # x_coords = torch.linspace(0, 1, width, device=device).view(1, 1, 1, width).expand(batch_size, -1, height, -1)
+    # y_coords = torch.linspace(0, 1, height, device=device).view(1, 1, height, 1).expand(batch_size, -1, -1, width)
+    #
+    # # Compute the expected x and y coordinates
+    # expected_x = torch.sum(x_coords * softmax, dim=(2, 3)).unsqueeze(-1)
+    # expected_y = torch.sum(y_coords * softmax, dim=(2, 3)).unsqueeze(-1)
+    expected_x = indices % width
+    expected_y = indices.floor() / height
+    # Concatenate the expected x and y coordinates to get the landmark coordinates
+    landmark = torch.cat([expected_x.unsqueeze(-1), expected_y.unsqueeze(-1)], dim=2)
+    # print(landmark.shape)
+    return landmark
+
+
 dataset = AFLW(config.test_text,
                config.test_annotations_path,
                config.test_images_path,
@@ -35,7 +75,7 @@ model = MeanTeacher_CPS(num_classes=config.num_classes,
 
 model = DataParallel(model).to(config.device)
 
-checkpoint_name = "resnet18_CPS_mean_teacher_1_4_4"
+checkpoint_name = "resnet18_CPS_mean_teacher_1_4_53"
 checkpoint_path = os.path.join("./log/snapshot", checkpoint_name, 'checkpoint_best.pt')
 checkpoint = torch.load(checkpoint_path, map_location=config.device)
 model.module.load_state_dict(checkpoint['state_dict'])
@@ -80,8 +120,11 @@ for i in pbar:
     image_save = (image_save.transpose(1, 2, 0) * dataset.std + dataset.mean) * 255.0
     image_save = np.ascontiguousarray(image_save, dtype=np.uint8)
     save_total = []
-    landmark_gt = heatmap2coordinate(
-        torch.from_numpy(heatmap).unsqueeze(0).contiguous().to(config.device))  # 1 x 19 x 2
+    landmark_gt = torch.from_numpy(landmark).unsqueeze(0).to(config.device)
+    # landmark_gt = heatmap2coordinate(
+    #     torch.from_numpy(heatmap).unsqueeze(0).contiguous().to(config.device))
+    # landmark_gt = landmark_gt.squeeze(0).int()
+
     landmark_pred_1 = heatmap2coordinate(pred1_)  # 1 x 19 x 2
     landmark_pred_2 = heatmap2coordinate(pred2_)
     nme1 = evaluator(landmark_pred_1, landmark_gt, torch.from_numpy(mask[:-1]).unsqueeze(0).to(config.device))
@@ -89,7 +132,6 @@ for i in pbar:
 
     nme_meter1.update(nme1.item())
     nme_meter2.update(nme2.item())
-    landmark_gt = landmark_gt.squeeze(0).int()
     landmark_pred = landmark_pred_1.squeeze(0).int()
     if i < 100:
         if args.mode == 'channel':
@@ -111,8 +153,8 @@ for i in pbar:
                 pred_points = landmark_pred[p][0].item(), landmark_pred[p][1].item()
                 # print(image_save.shape, gt_points, pred_points)
                 if mask[p] == 1:  # draw only visible point
-                    image_save_ = cv2.circle(image_save_, gt_points, 1, (255, 0, 0), 2)  # blue
-                    image_save_ = cv2.circle(image_save_, pred_points, 1, (0, 0, 255), 2)  # red
+                    image_save_ = cv2.circle(image_save_, gt_points, 1, (255, 0, 0), 1)  # blue
+                    image_save_ = cv2.circle(image_save_, pred_points, 1, (0, 0, 255), 1)  # red
                 save = np.concatenate([image_save_, hm_gt.copy(), hm_pred.copy()], axis=0)
                 save_total.append(save)
             save_total = np.concatenate(save_total, axis=1)
@@ -128,9 +170,9 @@ for i in pbar:
             for p in range(19):
                 gt_points = int(landmark[p][0].item()), int(landmark[p][1].item())
                 pred_points = int(landmark_pred[p][0].item()), int(landmark_pred[p][1].item())
-                if mask[p] == 1:
-                    image_save = cv2.circle(image_save, gt_points, 1, (255, 0, 0), 2)  # blue
-                    cv2.circle(image_save_pred, pred_points, 1, (0, 0, 255), 2)  # red
+                # if mask[p] == 1:
+                image_save = cv2.circle(image_save, gt_points, 1, (255, 0, 0), 2)  # blue
+                cv2.circle(image_save_pred, pred_points, 1, (0, 0, 255), 2)  # red
             save1 = np.concatenate([image_save, hm_gt], axis=0)
             save2 = np.concatenate([image_save_pred, hm_pred], axis=0)
             save = np.concatenate([save1, save2], axis=1)

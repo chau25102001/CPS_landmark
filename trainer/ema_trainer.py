@@ -1,13 +1,15 @@
 import os
 
+import torch
 from torch.nn.utils import clip_grad_norm_
 from torch.nn import DataParallel
 from datasets.aflw import get_train_loader, get_test_loader
+from models.network import Network
 from models.mean_teacher_network import MeanTeacher_CPS
 import torch.optim as optim
 from losses.losses import *
 from tqdm import tqdm
-from utils.utils import AverageMeter, NME, heatmap2coordinate, local_filter
+from utils.utils import AverageMeter, NME, freeze_bn, unfreeze_bn, local_filter
 import wandb
 
 
@@ -24,13 +26,16 @@ class EMATrainer:
                                               epsilon=self.config.epsilon,
                                               theta=self.config.theta,
                                               use_target_weight=self.config.use_target_weight,
-                                              loss_weight=self.config.loss_weight)
+                                              loss_weight=self.config.loss_weight,
+                                              use_weighted_mask=self.config.use_weighted_mask)
             self.criterion_cps = AdaptiveWingLoss(alpha=self.config.alpha,
                                                   omega=self.config.omega,
                                                   epsilon=self.config.epsilon,
                                                   theta=self.config.theta,
                                                   use_target_weight=self.config.use_target_weight,
                                                   loss_weight=self.config.loss_weight)
+            # self.criterion_cps = MSELoss()
+
         elif self.config.loss == 'mse':
             self.criterion = MSELoss()
             self.criterion_cps = MSELoss()
@@ -80,29 +85,30 @@ class EMATrainer:
             image = batch['image'].to(self.config.device)
             heatmap = batch['heatmap'].to(self.config.device)
             mask = batch['mask_heatmap'].squeeze(1).unsqueeze(2).to(self.config.device)
+            landmark = batch['landmark'].to(self.config.device)
             with torch.no_grad():
                 s_pred_1, t_pred_1 = self.model(image, step=1)
                 s_pred_2, t_pred_2 = self.model(image, step=2)
 
                 # loss for model 1
-                loss_sup_student_1 = self.criterion(torch.sigmoid(s_pred_1), heatmap, mask=mask)
-                loss_sup_teacher_1 = self.criterion(torch.sigmoid(t_pred_1), heatmap, mask=mask)
+                loss_sup_student_1 = self.criterion(torch.sigmoid(s_pred_1), heatmap)
+                loss_sup_teacher_1 = self.criterion(torch.sigmoid(t_pred_1), heatmap)
                 loss_meter_student_1.update(loss_sup_student_1.item())
                 loss_meter_teacher_1.update(loss_sup_teacher_1.item())
 
-                nme_student_1 = self.evaluator(torch.sigmoid(s_pred_1), heatmap, mask=mask[:, :-1, :].squeeze(-1))
-                nme_teacher_1 = self.evaluator(torch.sigmoid(t_pred_1), heatmap, mask=mask[:, :-1, :].squeeze(-1))
+                nme_student_1 = self.evaluator(torch.sigmoid(s_pred_1), landmark, mask=mask[:, :-1, :].squeeze(-1))
+                nme_teacher_1 = self.evaluator(torch.sigmoid(t_pred_1), landmark, mask=mask[:, :-1, :].squeeze(-1))
                 nme_meter_student_1.update(nme_student_1.item())
                 nme_meter_teacher_1.update(nme_teacher_1.item())
 
                 # loss for model 2
-                loss_sup_student_2 = self.criterion(torch.sigmoid(s_pred_2), heatmap, mask=mask)
-                loss_sup_teacher_2 = self.criterion(torch.sigmoid(t_pred_2), heatmap, mask=mask)
+                loss_sup_student_2 = self.criterion(torch.sigmoid(s_pred_2), heatmap)
+                loss_sup_teacher_2 = self.criterion(torch.sigmoid(t_pred_2), heatmap)
                 loss_meter_student_2.update(loss_sup_student_2.item())
                 loss_meter_teacher_2.update(loss_sup_teacher_2.item())
 
-                nme_student_2 = self.evaluator(torch.sigmoid(s_pred_2), heatmap, mask=mask[:, :-1, :].squeeze(-1))
-                nme_teacher_2 = self.evaluator(torch.sigmoid(t_pred_2), heatmap, mask=mask[:, :-1, :].squeeze(-1))
+                nme_student_2 = self.evaluator(torch.sigmoid(s_pred_2), landmark, mask=mask[:, :-1, :].squeeze(-1))
+                nme_teacher_2 = self.evaluator(torch.sigmoid(t_pred_2), landmark, mask=mask[:, :-1, :].squeeze(-1))
                 nme_meter_student_2.update(nme_student_2.item())
                 nme_meter_teacher_2.update(nme_teacher_2.item())
                 pbar.set_postfix({
@@ -156,8 +162,8 @@ class EMATrainer:
             s_pred_2, t_pred_2 = self.model(image, step=2)
 
             # loss for model 1
-            loss_sup_student_1 = self.criterion(torch.sigmoid(s_pred_1), heatmap, mask=mask)
-            loss_sup_teacher_1 = self.criterion(torch.sigmoid(t_pred_1), heatmap, mask=mask)
+            loss_sup_student_1 = self.criterion(torch.sigmoid(s_pred_1), heatmap)
+            loss_sup_teacher_1 = self.criterion(torch.sigmoid(t_pred_1), heatmap)
             loss_meter_student_1.update(loss_sup_student_1.item())
             loss_meter_teacher_1.update(loss_sup_teacher_1.item())
 
@@ -244,10 +250,9 @@ class EMATrainer:
             heatmap = labeled_batch['heatmap'].to(self.config.device)
             unlabeled_image = unlabeled_batch['image'].to(self.config.device)
             mask = labeled_batch['mask_heatmap'].squeeze(1).unsqueeze(2).to(self.config.device)
-
+            landmark = labeled_batch['landmark'].to(self.config.device)
             with torch.no_grad():  # generate pseudo labels
                 self.model.eval()
-
                 unsup_pseudo_logits_teacher_1 = self.model(unlabeled_image, step=1)[1].detach()
                 unsup_pseudo_logits_teacher_2 = self.model(unlabeled_image, step=2)[1].detach()
 
@@ -267,41 +272,38 @@ class EMATrainer:
                 sup_mask_teacher_2 = local_filter(sup_pseudo_label_teacher_2, self.config.threshold)
 
             self.model.train()
-            logits_unsup_student_1, _ = self.model(unlabeled_image, step=1)
-            logits_unsup_student_2, _ = self.model(unlabeled_image, step=2)
+
             logits_sup_student_1, logits_sup_teacher_1 = self.model(labeled_image, step=1)
             logits_sup_student_2, logits_sup_teacher_2 = self.model(labeled_image, step=2)
-
-            # cross pseudo supervision + ema + local filter
-            unsup_cps_loss = self.criterion_cps(torch.sigmoid(logits_unsup_student_1),
-                                                unsup_pseudo_label_teacher_2,
-                                                mask=unsup_mask_teacher_2) \
-                             + self.criterion_cps(torch.sigmoid(logits_unsup_student_2),
-                                                  unsup_pseudo_label_teacher_1,
-                                                  mask=unsup_mask_teacher_1)
-            sup_cps_loss = self.criterion_cps(torch.sigmoid(logits_sup_student_1),
-                                              sup_pseudo_label_teacher_2,
-                                              mask=sup_mask_teacher_2) \
-                           + self.criterion_cps(torch.sigmoid(logits_sup_student_2),
-                                                sup_pseudo_label_teacher_1,
-                                                mask=sup_mask_teacher_1)
-            loss_meter_cps_sup.update(sup_cps_loss.item())
-            loss_meter_cps_unsup.update(unsup_cps_loss.item())
-
-            cps_loss = sup_cps_loss + unsup_cps_loss
-
             sup_loss_student_1 = self.criterion(torch.sigmoid(logits_sup_student_1),
-                                                heatmap, mask=mask)
+                                                heatmap, mask=None)
             sup_loss_student_2 = self.criterion(torch.sigmoid(logits_sup_student_2),
-                                                heatmap, mask=mask)
+                                                heatmap, mask=None)
             loss_meter_sup_student_1.update(sup_loss_student_1.item())
             loss_meter_sup_student_2.update(sup_loss_student_2.item())
+            loss_total = sup_loss_student_1 + sup_loss_student_2
+            if epoch >= self.config.warm_up_epoch:
+                # cross pseudo supervision + ema + local filter
+                logits_unsup_student_1, _ = self.model(unlabeled_image, step=1)
+                logits_unsup_student_2, _ = self.model(unlabeled_image, step=2)
+                unsup_cps_loss = self.criterion_cps(torch.sigmoid(logits_unsup_student_1),
+                                                    unsup_pseudo_label_teacher_2,
+                                                    mask=unsup_mask_teacher_2) \
+                                 + self.criterion_cps(torch.sigmoid(logits_unsup_student_2),
+                                                      unsup_pseudo_label_teacher_1,
+                                                      mask=unsup_mask_teacher_1)
+                sup_cps_loss = self.criterion_cps(torch.sigmoid(logits_sup_student_1),
+                                                  sup_pseudo_label_teacher_2,
+                                                  mask=sup_mask_teacher_2) \
+                               + self.criterion_cps(torch.sigmoid(logits_sup_student_2),
+                                                    sup_pseudo_label_teacher_1,
+                                                    mask=sup_mask_teacher_1)
+                loss_meter_cps_sup.update(sup_cps_loss.item())
+                loss_meter_cps_unsup.update(unsup_cps_loss.item())
 
-            loss_total = cps_loss * self.config.cps_loss_weight + sup_loss_student_1 + sup_loss_student_2
-            if self.config.use_aux_loss:
-                aux_loss = self.criterion_aux(logits_sup_student_1, heatmap, mask=mask.squeeze(-1)) \
-                           + self.criterion_aux(logits_sup_student_2, heatmap, mask=mask.squeeze(-1))
-                loss_total = loss_total + 0.1 * aux_loss
+                cps_loss = sup_cps_loss + unsup_cps_loss
+
+                loss_total += cps_loss * self.config.cps_loss_weight
             loss_total.backward()
             clip_grad_norm_(self.model.module.branch1.parameters(), 5)
             clip_grad_norm_(self.model.module.branch2.parameters(), 5)
@@ -316,10 +318,10 @@ class EMATrainer:
                 self.optimizer_l.param_groups[i]['lr'] = lr
             for i in range(len(self.optimizer_r.param_groups)):
                 self.optimizer_r.param_groups[i]['lr'] = lr
-            nme_student1 = self.evaluator(torch.sigmoid(logits_sup_student_1), heatmap, mask[:, :-1, :].squeeze(-1))
-            nme_student2 = self.evaluator(torch.sigmoid(logits_sup_student_2), heatmap, mask[:, :-1, :].squeeze(-1))
-            nme_teacher1 = self.evaluator(torch.sigmoid(logits_sup_teacher_1), heatmap, mask[:, :-1, :].squeeze(-1))
-            nme_teacher2 = self.evaluator(torch.sigmoid(logits_sup_teacher_2), heatmap, mask[:, :-1, :].squeeze(-1))
+            nme_student1 = self.evaluator(torch.sigmoid(logits_sup_student_1), landmark, mask[:, :-1, :].squeeze(-1))
+            nme_student2 = self.evaluator(torch.sigmoid(logits_sup_student_2), landmark, mask[:, :-1, :].squeeze(-1))
+            nme_teacher1 = self.evaluator(torch.sigmoid(logits_sup_teacher_1), landmark, mask[:, :-1, :].squeeze(-1))
+            nme_teacher2 = self.evaluator(torch.sigmoid(logits_sup_teacher_2), landmark, mask[:, :-1, :].squeeze(-1))
 
             nme_meter_student_1.update(nme_student1.item())
             nme_meter_student_2.update(nme_student2.item())

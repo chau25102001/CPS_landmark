@@ -21,6 +21,7 @@ parser.add_argument("--mode", type=str, default='joint', help='joint or channel'
 args = parser.parse_args()
 warnings.filterwarnings('ignore')
 config = get_config(train=False)
+# config.device = 'cpu'
 dataset = AFLW(config.test_text,
                config.test_annotations_path,
                config.test_images_path,
@@ -35,7 +36,7 @@ model = Network(num_classes=config.num_classes,
 
 model = DataParallel(model).to(config.device)
 
-checkpoint_name = "resnet18_CPS_mean_teacher_1_4_4"
+checkpoint_name = "resnet18_fully_supervised_1_8_0"
 checkpoint_path = os.path.join("./log/snapshot", checkpoint_name, 'checkpoint_best.pt')
 checkpoint = torch.load(checkpoint_path, map_location=config.device)
 model.module.load_state_dict(checkpoint['state_dict'])
@@ -78,8 +79,11 @@ for i in pbar:
     image_save = (image_save.transpose(1, 2, 0) * dataset.std + dataset.mean) * 255.0
     image_save = np.ascontiguousarray(image_save, dtype=np.uint8)
     save_total = []
-    landmark_gt = heatmap2coordinate(
-        torch.from_numpy(heatmap).unsqueeze(0).contiguous().to(config.device))  # 1 x 19 x 2
+    # landmark_gt = heatmap2coordinate(
+    #     torch.from_numpy(heatmap).unsqueeze(0).contiguous().to(config.device))  # 1 x 19 x 2
+    # landmark_gt = landmark_gt.squeeze(0).int()
+    landmark_gt = torch.from_numpy(landmark).unsqueeze(0).to(config.device)
+
     landmark_pred_1 = heatmap2coordinate(pred1_)  # 1 x 19 x 2
     landmark_pred_2 = heatmap2coordinate(pred2_)
     nme1 = evaluator(landmark_pred_1, landmark_gt, torch.from_numpy(mask[:-1]).unsqueeze(0).to(config.device))
@@ -87,7 +91,6 @@ for i in pbar:
 
     nme_meter1.update(nme1.item())
     nme_meter2.update(nme2.item())
-    landmark_gt = landmark_gt.squeeze(0).int()
     landmark_pred = landmark_pred_1.squeeze(0).int()
     if i < 100:
         if args.mode == 'channel':

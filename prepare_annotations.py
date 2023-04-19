@@ -70,7 +70,7 @@ def generate_label_map(pts, height, width, sigma, downsample, nopoints, mask, ct
                                                   + (offset + y * downsample - pts[1, pid]) ** 2) \
                                ,
                                (height, width, num_points), dtype=int)
-    mask_distance = distance < sigma * 3
+    mask_distance = distance < (sigma * 3) ** 2
     mask_heatmap = np.ones((1, 1, num_points + 1), dtype='float32')
     mask_heatmap[0, 0, :num_points] = visiable
     mask_heatmap[0, 0, num_points] = (nopoints == False)
@@ -81,18 +81,17 @@ def generate_label_map(pts, height, width, sigma, downsample, nopoints, mask, ct
         transformed_label = np.exp(transformed_label)
     else:
         raise TypeError('Does not know this type [{:}] for label generation'.format(ctype))
-    # transformed_label[transformed_label < threshold] = 0
+    transformed_label[transformed_label < threshold] = 0
     transformed_label[transformed_label > 1] = 1
     # transformed_label = transformed_label * mask_heatmap[:, :, :num_points]
-    transformed_label = transformed_label * mask_distance  # not masking H x W x C
-    norm = np.sum(transformed_label, axis=(0, 1))  # C
-    print(norm.shape, norm[15])
-    transformed_label = transformed_label / norm
+    transformed_label = transformed_label  # not masking H x W x C
+    # print(norm.shape, norm[15])
+    transformed_label = transformed_label
     background_label = 1 - np.amax(transformed_label, axis=2)
     background_label[background_label < 0] = 0
     heatmap = np.concatenate((transformed_label, np.expand_dims(background_label, axis=2)), axis=2).astype('float32')
 
-    return heatmap * mask_heatmap, mask_heatmap
+    return heatmap, mask_heatmap
     # return heatmap, mask_heatmap  # not masking
 
 
@@ -103,7 +102,7 @@ if os.path.exists(save_dir):
 os.mkdir(save_dir)
 count = 0
 total = len(indices)
-num_cpu = 1
+num_cpu = 8
 partition = total // num_cpu
 
 
@@ -161,10 +160,10 @@ def generate(ids, start):
         image = cv2.resize(image, save_size, cv2.INTER_LINEAR)
         landmark[:, 0] = (landmark[:, 0] - bbox[0]) / bw * save_size[0]
         landmark[:, 1] = (landmark[:, 1] - bbox[2]) / bw * save_size[1]
-
+        # landmark = landmark
         heatmap, mask_heatmap = generate_label_map(
-            np.concatenate([landmark.copy().transpose(1, 0), np.expand_dims(mask, 0)]),
-            save_size[1], save_size[0], 1, 1, not has_landmark, mask, 'gaussian')
+            np.concatenate([landmark.copy().astype(np.int).transpose(1, 0), np.expand_dims(mask, 0)]),
+            save_size[1], save_size[0], 4, 1, not has_landmark, mask, 'gaussian')
         mask_heatmap = mask_heatmap[0][0]
         new_name = str(index) + "_" + image_name.replace("/", "_")
         save_dict = {"landmark": landmark,
