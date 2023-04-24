@@ -43,7 +43,7 @@ class EMATrainer:
         if self.config.use_aux_loss:
             self.criterion_aux = PeakLoss(H=self.config.img_height, W=self.config.img_width)
 
-        self.criterion_class = nn.BCEWithLogitsLoss()
+        self.criterion_class = BCELoss()
 
         self.model = MeanTeacher_CPS(num_classes=self.config.num_classes,
                                      model_size=self.config.model_size,
@@ -346,9 +346,19 @@ class EMATrainer:
                                                                  0.)
                 unsup_pseudo_class_label_teacher_2 = torch.where(torch.sigmoid(unsup_pseudo_class_teacher_2) >= 0.5, 1.,
                                                                  0.)
+                unsup_mask_class_teacher_1 = torch.where(
+                    torch.sigmoid(unsup_pseudo_class_teacher_1) >= self.config.class_threshold, 1.,
+                    0.)
+                unsup_mask_class_teacher_2 = torch.where(
+                    torch.sigmoid(unsup_pseudo_class_teacher_2) >= self.config.class_threshold, 1.,
+                    0.)
 
                 sup_pseudo_class_label_teacher_1 = torch.where(torch.sigmoid(sup_pseudo_class_teacher_1) >= 0.5, 1., 0.)
                 sup_pseudo_class_label_teacher_2 = torch.where(torch.sigmoid(sup_pseudo_class_teacher_2) >= 0.5, 1., 0.)
+                sup_mask_class_teacher_1 = torch.where(
+                    torch.sigmoid(sup_pseudo_class_teacher_1) >= self.config.class_threshold, 1., 0.)
+                sup_mask_class_teacher_2 = torch.where(
+                    torch.sigmoid(sup_pseudo_class_teacher_2) >= self.config.class_threshold, 1., 0.)
 
             self.model.train()
 
@@ -395,16 +405,20 @@ class EMATrainer:
                 cps_loss = sup_cps_loss + unsup_cps_loss
                 if self.config.classification:
                     unsup_cps_loss_class = self.criterion_class(class_unsup_student_1,
-                                                                unsup_pseudo_class_label_teacher_2) \
+                                                                unsup_pseudo_class_label_teacher_2,
+                                                                mask=unsup_mask_class_teacher_2) \
                                            + self.criterion_class(class_unsup_student_2,
-                                                                  unsup_pseudo_class_label_teacher_1)
+                                                                  unsup_pseudo_class_label_teacher_1,
+                                                                  mask=unsup_mask_class_teacher_1)
 
-                    sup_cps_loss_class = self.criterion_class(class_sup_student_1, sup_pseudo_class_label_teacher_2) \
-                                         + self.criterion_class(class_sup_student_2, sup_pseudo_class_label_teacher_1)
+                    sup_cps_loss_class = self.criterion_class(class_sup_student_1, sup_pseudo_class_label_teacher_2,
+                                                              mask=sup_mask_class_teacher_2) \
+                                         + self.criterion_class(class_sup_student_2, sup_pseudo_class_label_teacher_1,
+                                                                mask=sup_mask_class_teacher_1)
 
                     loss_class_meter_cps_unsup.update(unsup_cps_loss_class.item())
                     loss_class_meter_cps_sup.update(sup_cps_loss_class.item())
-                    cps_loss += self.config.class_loss_weight * (unsup_cps_loss_class + sup_cps_loss_class)
+                    cps_loss += (unsup_cps_loss_class + sup_cps_loss_class)
 
                 loss_total += cps_loss * self.config.cps_loss_weight
             loss_total.backward()

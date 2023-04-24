@@ -191,6 +191,18 @@ class AdaptiveWingLoss(torch.nn.Module):
         return loss_mat.mean() if self.reduction == "mean" else loss_mat
 
 
+class BCELoss(nn.Module):
+    def __init__(self):
+        super(BCELoss, self).__init__()
+        self.criterion = nn.BCEWithLogitsLoss(reduction='none')
+
+    def forward(self, pred, gt, mask=None):
+        loss = self.criterion(pred, gt)  # bsize x k
+        if mask is not None:
+            loss = loss * mask
+        return torch.mean(loss)
+
+
 if __name__ == "__main__":
     l = AdaptiveWingLoss()
     a = torch.randn((8, 20, 128, 128))

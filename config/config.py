@@ -54,7 +54,7 @@ def get_config(train=True):
     C.seed = 12345
     C.log_dir = "./log"
     C.mean_teacher = True
-    C.classification = False
+    C.classification = True
 
     '''PATH CONFIG'''
     C.train_text_labeled = '/home/s/chaunm/CPS_landmarks/data/split/train_labeled_1_4.txt'
@@ -87,10 +87,11 @@ def get_config(train=True):
     C.loss_weight = 1
     C.use_aux_loss = False
     C.cps_loss_weight = 1.5
-    C.class_loss_weight = 0.0
+    C.class_loss_weight = 1.
     C.use_weighted_mask = True  # for a wing loss
     '''EMA config'''
     C.threshold = 0.7
+    C.class_threshold = 0.7
     C.ema_decay = 0.5
     '''TRAIN CONFIG'''
     C.img_height = 128
