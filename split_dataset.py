@@ -2,9 +2,14 @@ import os
 import shutil
 from pathlib import Path
 import random
+from argparse import ArgumentParser
+parser = ArgumentParser(description='splitting data')
+parser.add_argument("--train_path", type=str, help='path to train sub folder')
+parser.add_argument("--test_path", type=str, help='path to test sub folder')
+args = parser.parse_args()
 
-train_annot_path = "/home/s/chaunm/DATA/AFLW/train_128_3/annotations"
-test_annot_path = "/home/s/chaunm/DATA/AFLW/test_128_3/annotations"
+train_annot_path = os.path.join(args.train_path, "annotations")
+test_annot_path = os.path.join(args.test_path, "annotations")
 
 save_text_dir = "./data/split"
 if os.path.exists(save_text_dir):

@@ -57,9 +57,9 @@ def get_config(train=True):
     C.classification = True
 
     '''PATH CONFIG'''
-    C.train_text_labeled = '/home/s/chaunm/CPS_landmarks/data/split/train_labeled_1_4.txt'
-    C.train_text_unlabeled = '/home/s/chaunm/CPS_landmarks/data/split/train_unlabeled_1_4.txt'
-    C.test_text = '/home/s/chaunm/CPS_landmarks/data/split/test.txt'
+    C.train_text_labeled = './data/split/train_labeled_1_4.txt'
+    C.train_text_unlabeled = './data/split/train_unlabeled_1_4.txt'
+    C.test_text = './data/split/test.txt'
     C.train_annotations_path = '/home/s/chaunm/DATA/AFLW/train_128_4/annotations'
     C.train_images_path = '/home/s/chaunm/DATA/AFLW/train_128_4/images'
     C.test_annotations_path = '/home/s/chaunm/DATA/AFLW/test_128_4/annotations'
