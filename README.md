@@ -32,7 +32,8 @@ and ``aflw-sqlite.pth``. Put all of them under the same directory, for example `
   python split_dataset.py --train_path [path-to-train_preprocessed] --test_path [path-to-test_preprocessed]
   ```
 
-
+**Configurations**
+-
 - go to ``config/config.py``. Edit the following lines:
   ```
   C.train_annotations_path = '[path-to-train_preprocessed]/annotations'
@@ -47,6 +48,8 @@ and ``aflw-sqlite.pth``. Put all of them under the same directory, for example `
   ```
   with ``[ratio]`` being the ratio of labeled/total data (can be ``1_8``, ``1_4``, or ``1_2``)
 
+
+- Optional: toggle the fields: ``C.mean_teacher`` and ``C.classification``, to enable/disable EMA teacher and classification task.
 
 **Training**
 -
