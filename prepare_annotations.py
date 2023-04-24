@@ -10,11 +10,15 @@ from tqdm import tqdm
 from skimage import io
 from PIL import Image
 from threading import Thread
+from argparse import ArgumentParser
 
-mat_path = '/home/s/chaunm/DATA/AFLW/AFLWinfo_release.mat'
-image_path = '/home/s/chaunm/DATA/AFLW'
-train_root = Path(os.path.join(image_path, 'train_128_4'))
-test_root = Path(os.path.join(image_path, 'test_128_4'))
+parser = ArgumentParser(description='prepare data')
+parser.add_argument("--root", type=str, help="path to AFLW folder")
+args = parser.parse_args()
+mat_path = os.path.join(args.root, 'AFLWinfo_release.mat')
+image_path = args.root
+train_root = Path(os.path.join(image_path, 'train_preprocessed'))
+test_root = Path(os.path.join(image_path, 'test_preprocessed'))
 if os.path.exists(train_root):
     shutil.rmtree(train_root)
     shutil.rmtree(test_root)
@@ -25,7 +29,7 @@ for dir in ['images', 'annotations']:
     Path(os.path.join(test_root, dir)).mkdir(parents=True, exist_ok=True)
 
 annotations = loadmat(mat_path)
-extra_annotations = torch.load(r'/home/s/chaunm/DATA/AFLW/aflw-sqlite.pth')  # heapose and bbox
+extra_annotations = torch.load(os.path.join(args.root, 'aflw-sqlite.pth'))  # heapose and bbox
 
 bboxes = annotations['bbox']
 landmarks = annotations['data']

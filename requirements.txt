@@ -1,0 +1,13 @@
+torch~=1.12.1
+numpy~=1.23.3
+easydict~=1.10
+termcolor~=1.1.0
+torchvision~=0.13.1
+timm~=0.6.12
+opencv-python~=4.6.0.66
+albumentations~=0.5.2
+scipy~=1.9.1
+tqdm~=4.64.1
+wandb~=0.13.9
+scikit-image~=0.19.3
+pillow~=9.2.0
