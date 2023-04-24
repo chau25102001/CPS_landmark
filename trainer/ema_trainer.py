@@ -9,7 +9,7 @@ from models.mean_teacher_network import MeanTeacher_CPS
 import torch.optim as optim
 from losses.losses import *
 from tqdm import tqdm
-from utils.utils import AverageMeter, NME, freeze_bn, unfreeze_bn, local_filter
+from utils.utils import AverageMeter, NME, freeze_bn, unfreeze_bn, local_filter, Accuracy
 import wandb
 
 
@@ -42,6 +42,9 @@ class EMATrainer:
 
         if self.config.use_aux_loss:
             self.criterion_aux = PeakLoss(H=self.config.img_height, W=self.config.img_width)
+
+        self.criterion_class = nn.BCEWithLogitsLoss()
+
         self.model = MeanTeacher_CPS(num_classes=self.config.num_classes,
                                      model_size=self.config.model_size,
                                      model=self.config.model)
@@ -65,6 +68,7 @@ class EMATrainer:
                                                                    eta_min=1e-5)
         self.current_epoch = 0
         self.evaluator = NME(h=self.config.img_height, w=self.config.img_width)
+        self.evaluator_class = Accuracy(threshold=0.5)
         wandb.init(project='Cross Pseudo Label Mean Teacher AFLW', entity='chaunm', resume=False, config=config,
                    name=self.config.name)
 
@@ -76,19 +80,30 @@ class EMATrainer:
         loss_meter_teacher_1 = AverageMeter()
         loss_meter_teacher_2 = AverageMeter()
 
+        loss_class_meter_student_1 = AverageMeter()
+        loss_class_meter_student_2 = AverageMeter()
+        loss_class_meter_teacher_1 = AverageMeter()
+        loss_class_meter_teacher_2 = AverageMeter()
+
         nme_meter_student_1 = AverageMeter()
         nme_meter_student_2 = AverageMeter()
         nme_meter_teacher_1 = AverageMeter()
         nme_meter_teacher_2 = AverageMeter()
 
+        acc_meter_student_1 = AverageMeter()
+        acc_meter_student_2 = AverageMeter()
+        acc_meter_teacher_1 = AverageMeter()
+        acc_meter_teacher_2 = AverageMeter()
+
         for batch in pbar:
             image = batch['image'].to(self.config.device)
             heatmap = batch['heatmap'].to(self.config.device)
-            mask = batch['mask_heatmap'].squeeze(1).unsqueeze(2).to(self.config.device)
+            mask = batch['mask_heatmap'].squeeze(1).unsqueeze(2).to(self.config.device)  # bsize x (k+1) x 1
+            class_label = batch['mask_heatmap'].squeeze(1)[:, :-1].to(self.config.device)  # bsize x k
             landmark = batch['landmark'].to(self.config.device)
             with torch.no_grad():
-                s_pred_1, t_pred_1 = self.model(image, step=1)
-                s_pred_2, t_pred_2 = self.model(image, step=2)
+                s_pred_1, t_pred_1, s_class_1, t_class_1 = self.model(image, step=1)
+                s_pred_2, t_pred_2, s_class_2, t_class_2 = self.model(image, step=2)
 
                 # loss for model 1
                 loss_sup_student_1 = self.criterion(torch.sigmoid(s_pred_1), heatmap)
@@ -100,6 +115,16 @@ class EMATrainer:
                 nme_teacher_1 = self.evaluator(torch.sigmoid(t_pred_1), landmark, mask=mask[:, :-1, :].squeeze(-1))
                 nme_meter_student_1.update(nme_student_1.item())
                 nme_meter_teacher_1.update(nme_teacher_1.item())
+                if self.config.classification:
+                    loss_class_student_1 = self.criterion_class(s_class_1, class_label)
+                    loss_class_teacher_1 = self.criterion_class(t_class_1, class_label)
+                    loss_class_meter_student_1.update(loss_class_student_1.item())
+                    loss_class_meter_teacher_1.update(loss_class_teacher_1.item())
+
+                    acc_student_1 = self.evaluator_class(s_class_1, class_label)
+                    acc_teacher_1 = self.evaluator_class(t_class_1, class_label)
+                    acc_meter_student_1.update(acc_student_1.item())
+                    acc_meter_teacher_1.update(acc_teacher_1.item())
 
                 # loss for model 2
                 loss_sup_student_2 = self.criterion(torch.sigmoid(s_pred_2), heatmap)
@@ -111,6 +136,17 @@ class EMATrainer:
                 nme_teacher_2 = self.evaluator(torch.sigmoid(t_pred_2), landmark, mask=mask[:, :-1, :].squeeze(-1))
                 nme_meter_student_2.update(nme_student_2.item())
                 nme_meter_teacher_2.update(nme_teacher_2.item())
+                if self.config.classification:
+                    loss_class_student_2 = self.criterion_class(s_class_2, class_label)
+                    loss_class_teacher_2 = self.criterion_class(t_class_2, class_label)
+                    loss_class_meter_student_2.update(loss_class_student_2.item())
+                    loss_class_meter_teacher_2.update(loss_class_teacher_2.item())
+
+                    acc_student_2 = self.evaluator_class(s_class_2, class_label)
+                    acc_teacher_2 = self.evaluator_class(t_class_2, class_label)
+                    acc_meter_student_2.update(acc_student_2.item())
+                    acc_meter_teacher_2.update(acc_teacher_2.item())
+
                 pbar.set_postfix({
                     'loss': [round(loss_meter_student_1.average(), 2),
                              round(loss_meter_teacher_1.average(), 2),
@@ -119,21 +155,35 @@ class EMATrainer:
                     'nme': [round(nme_meter_student_1.average(), 2),
                             round(nme_meter_teacher_1.average(), 2),
                             round(nme_meter_student_2.average(), 2),
-                            round(nme_meter_teacher_2.average(), 2)]
+                            round(nme_meter_teacher_2.average(), 2)],
+                    'acc': [round(acc_meter_student_1.average(), 2),
+                            round(acc_meter_teacher_1.average(), 2),
+                            round(acc_meter_student_2.average(), 2),
+                            round(acc_meter_teacher_2.average(), 2)]
                 })
         result = {'test/supervision loss student 1': loss_meter_student_1.average(),
                   'test/supervision loss student 2': loss_meter_student_2.average(),
                   'test/nme student 1': nme_meter_student_1.average(),
                   'test/nme student 2': nme_meter_student_2.average(),
+                  'test/class loss student 1': loss_class_meter_student_1.average(),
+                  'test/class loss student 2': loss_class_meter_student_2.average(),
+                  'test/acc student 1': acc_meter_student_1.average(),
+                  'test/acc student 2': acc_meter_student_2.average(),
+
                   'test/supervision loss teacher 1': loss_meter_teacher_1.average(),
                   'test/supervision loss teacher 2': loss_meter_teacher_2.average(),
                   'test/nme teacher 1': nme_meter_teacher_1.average(),
-                  'test/nme teacher 2': nme_meter_teacher_2.average()
+                  'test/nme teacher 2': nme_meter_teacher_2.average(),
+                  'test/class loss teacher 1': loss_class_meter_teacher_1.average(),
+                  'test/class loss teacher 2': loss_class_meter_teacher_2.average(),
+                  'test/acc teacher 1': acc_meter_teacher_1.average(),
+                  'test/acc teacher 2': acc_meter_teacher_2.average(),
                   }
         for k, v in result.items():
             wandb.log({k: v})
         return result
 
+    # deprecated
     def _train_supervise_epoch(self, epoch):
         self.model.train()
         pbar = tqdm(range(self.len_loader), total=self.len_loader,
@@ -240,6 +290,16 @@ class EMATrainer:
         nme_meter_teacher_1 = AverageMeter()
         nme_meter_teacher_2 = AverageMeter()
 
+        loss_class_meter_student_1 = AverageMeter()
+        loss_class_meter_student_2 = AverageMeter()
+        loss_class_meter_cps_sup = AverageMeter()
+        loss_class_meter_cps_unsup = AverageMeter()
+
+        acc_meter_student_1 = AverageMeter()
+        acc_meter_student_2 = AverageMeter()
+        acc_meter_teacher_1 = AverageMeter()
+        acc_meter_teacher_2 = AverageMeter()
+
         for _ in pbar:
             self.optimizer_l.zero_grad()
             self.optimizer_r.zero_grad()
@@ -249,16 +309,26 @@ class EMATrainer:
             labeled_image = labeled_batch['image'].to(self.config.device)
             heatmap = labeled_batch['heatmap'].to(self.config.device)
             unlabeled_image = unlabeled_batch['image'].to(self.config.device)
-            mask = labeled_batch['mask_heatmap'].squeeze(1).unsqueeze(2).to(self.config.device)
+            mask = labeled_batch['mask_heatmap'].squeeze(1).unsqueeze(2).to(self.config.device)  # bsize x 1 x (k+1)
+            class_label = labeled_batch['mask_heatmap'].squeeze(1)[:, :-1].to(self.config.device)  # bsize x k
             landmark = labeled_batch['landmark'].to(self.config.device)
-            with torch.no_grad():  # generate pseudo labels
+            with torch.no_grad():  # generate pseudo labels from teacher predictions
                 self.model.eval()
-                unsup_pseudo_logits_teacher_1 = self.model(unlabeled_image, step=1)[1].detach()
-                unsup_pseudo_logits_teacher_2 = self.model(unlabeled_image, step=2)[1].detach()
+                unlabled_output_1 = self.model(unlabeled_image, step=1)
+                unlabled_output_2 = self.model(unlabeled_image, step=2)
+                unsup_pseudo_logits_teacher_1 = unlabled_output_1[1].detach()
+                unsup_pseudo_logits_teacher_2 = unlabled_output_2[1].detach()
+                unsup_pseudo_class_teacher_1 = unlabled_output_1[3].detach()
+                unsup_pseudo_class_teacher_2 = unlabled_output_2[3].detach()
 
-                sup_pseudo_logits_teacher_1 = self.model(labeled_image, step=1)[1].detach()
-                sup_pseudo_logits_teacher_2 = self.model(labeled_image, step=2)[1].detach()
+                labeled_output_1 = self.model(labeled_image, step=1)
+                labeled_output_2 = self.model(labeled_image, step=2)
+                sup_pseudo_logits_teacher_1 = labeled_output_1[1].detach()
+                sup_pseudo_logits_teacher_2 = labeled_output_2[1].detach()
+                sup_pseudo_class_teacher_1 = labeled_output_1[3].detach()
+                sup_pseudo_class_teacher_2 = labeled_output_2[3].detach()
 
+                # heatmap pseudo label
                 unsup_pseudo_label_teacher_1 = torch.sigmoid(unsup_pseudo_logits_teacher_1)
                 unsup_pseudo_label_teacher_2 = torch.sigmoid(unsup_pseudo_logits_teacher_2)
 
@@ -271,21 +341,42 @@ class EMATrainer:
                 sup_mask_teacher_1 = local_filter(sup_pseudo_label_teacher_1, self.config.threshold)
                 sup_mask_teacher_2 = local_filter(sup_pseudo_label_teacher_2, self.config.threshold)
 
+                # classification pseudo label (hard label)
+                unsup_pseudo_class_label_teacher_1 = torch.where(torch.sigmoid(unsup_pseudo_class_teacher_1) >= 0.5, 1.,
+                                                                 0.)
+                unsup_pseudo_class_label_teacher_2 = torch.where(torch.sigmoid(unsup_pseudo_class_teacher_2) >= 0.5, 1.,
+                                                                 0.)
+
+                sup_pseudo_class_label_teacher_1 = torch.where(torch.sigmoid(sup_pseudo_class_teacher_1) >= 0.5, 1., 0.)
+                sup_pseudo_class_label_teacher_2 = torch.where(torch.sigmoid(sup_pseudo_class_teacher_2) >= 0.5, 1., 0.)
+
             self.model.train()
 
-            logits_sup_student_1, logits_sup_teacher_1 = self.model(labeled_image, step=1)
-            logits_sup_student_2, logits_sup_teacher_2 = self.model(labeled_image, step=2)
+            logits_sup_student_1, logits_sup_teacher_1, class_sup_student_1, class_sup_teacher_1 = self.model(
+                labeled_image, step=1)
+            logits_sup_student_2, logits_sup_teacher_2, class_sup_student_2, class_sup_teacher_2 = self.model(
+                labeled_image, step=2)
             sup_loss_student_1 = self.criterion(torch.sigmoid(logits_sup_student_1),
                                                 heatmap, mask=None)
             sup_loss_student_2 = self.criterion(torch.sigmoid(logits_sup_student_2),
                                                 heatmap, mask=None)
+            # print("class label: ", class_label)
+            # print("sup student 1: ", class_sup_student_1)
+
             loss_meter_sup_student_1.update(sup_loss_student_1.item())
             loss_meter_sup_student_2.update(sup_loss_student_2.item())
-            loss_total = sup_loss_student_1 + sup_loss_student_2
-            if epoch >= self.config.warm_up_epoch:
+
+            loss_total = (sup_loss_student_1 + sup_loss_student_2)
+            if self.config.classification:
+                sup_class_loss_student_1 = self.criterion_class(class_sup_student_1, class_label)
+                sup_class_loss_student_2 = self.criterion_class(class_sup_student_2, class_label)
+                loss_total += self.config.class_loss_weight * (sup_class_loss_student_1 + sup_class_loss_student_2)
+                loss_class_meter_student_1.update(sup_class_loss_student_1.item())
+                loss_class_meter_student_2.update(sup_class_loss_student_2.item())
+            if epoch >= self.config.warm_up_epoch:  # train without CPS for some epoch (default = 0)
                 # cross pseudo supervision + ema + local filter
-                logits_unsup_student_1, _ = self.model(unlabeled_image, step=1)
-                logits_unsup_student_2, _ = self.model(unlabeled_image, step=2)
+                logits_unsup_student_1, _, class_unsup_student_1, _ = self.model(unlabeled_image, step=1)
+                logits_unsup_student_2, _, class_unsup_student_2, _ = self.model(unlabeled_image, step=2)
                 unsup_cps_loss = self.criterion_cps(torch.sigmoid(logits_unsup_student_1),
                                                     unsup_pseudo_label_teacher_2,
                                                     mask=unsup_mask_teacher_2) \
@@ -302,6 +393,18 @@ class EMATrainer:
                 loss_meter_cps_unsup.update(unsup_cps_loss.item())
 
                 cps_loss = sup_cps_loss + unsup_cps_loss
+                if self.config.classification:
+                    unsup_cps_loss_class = self.criterion_class(class_unsup_student_1,
+                                                                unsup_pseudo_class_label_teacher_2) \
+                                           + self.criterion_class(class_unsup_student_2,
+                                                                  unsup_pseudo_class_label_teacher_1)
+
+                    sup_cps_loss_class = self.criterion_class(class_sup_student_1, sup_pseudo_class_label_teacher_2) \
+                                         + self.criterion_class(class_sup_student_2, sup_pseudo_class_label_teacher_1)
+
+                    loss_class_meter_cps_unsup.update(unsup_cps_loss_class.item())
+                    loss_class_meter_cps_sup.update(sup_cps_loss_class.item())
+                    cps_loss += self.config.class_loss_weight * (unsup_cps_loss_class + sup_cps_loss_class)
 
                 loss_total += cps_loss * self.config.cps_loss_weight
             loss_total.backward()
@@ -327,18 +430,36 @@ class EMATrainer:
             nme_meter_student_2.update(nme_student2.item())
             nme_meter_teacher_1.update(nme_teacher1.item())
             nme_meter_teacher_2.update(nme_teacher2.item())
+            if self.config.classification:
+                acc_student1 = self.evaluator_class(class_sup_student_1, class_label)
+                acc_student2 = self.evaluator_class(class_sup_student_2, class_label)
+                acc_teacher1 = self.evaluator_class(class_sup_teacher_1, class_label)
+                acc_teacher2 = self.evaluator_class(class_sup_teacher_2, class_label)
 
+                acc_meter_student_1.update(acc_student1.item())
+                acc_meter_student_2.update(acc_student2.item())
+                acc_meter_teacher_1.update(acc_teacher1.item())
+                acc_meter_teacher_2.update(acc_teacher2.item())
             pbar.set_postfix({
                 'sup loss': [round(loss_meter_sup_student_1.average(), 2),
                              round(loss_meter_sup_student_2.average(), 2),
                              ],
+                'sup class loss': [round(loss_class_meter_student_1.average(), 2),
+                                   round(loss_class_meter_student_2.average(), 2),
+                                   ],
                 'cps loss': [round(loss_meter_cps_sup.average(), 2),
                              round(loss_meter_cps_unsup.average(), 2),
                              ],
+                'cps loss class': [round(loss_class_meter_cps_sup.average(), 2),
+                                   round(loss_class_meter_cps_unsup.average(), 2), ],
                 'nme': [round(nme_meter_student_1.average(), 2),
                         round(nme_meter_teacher_1.average(), 2),
                         round(nme_meter_student_2.average(), 2),
-                        round(nme_meter_teacher_2.average(), 2)]
+                        round(nme_meter_teacher_2.average(), 2)],
+                'acc': [round(acc_meter_student_1.average(), 2),
+                        round(acc_meter_teacher_1.average(), 2),
+                        round(acc_meter_student_2.average(), 2),
+                        round(acc_meter_teacher_2.average(), 2)]
             })
 
         result = {
@@ -349,7 +470,13 @@ class EMATrainer:
             "train/nme_student_1": nme_meter_student_1.average(),
             "train/nme_student_2": nme_meter_student_2.average(),
             "train/nme_teacher_1": nme_meter_teacher_1.average(),
-            "train/nme_teacher_2": nme_meter_teacher_2.average()
+            "train/nme_teacher_2": nme_meter_teacher_2.average(),
+            'train/class_loss_student_1': loss_class_meter_student_1.average(),
+            'train/class_loss_student_2': loss_class_meter_student_2.average(),
+            'train/acc_student_1': acc_meter_student_1.average(),
+            'train/acc_student_2': acc_meter_student_2.average(),
+            'train/acc_teacher_1': acc_meter_teacher_1.average(),
+            'train/acc_teacher_2': acc_meter_teacher_2.average(),
 
         }
         for k, v in result.items():

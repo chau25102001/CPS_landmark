@@ -116,6 +116,8 @@ for i in indices:
     heatmap = data['heatmap']
     heatmap = channelwise_dilation(torch.from_numpy(heatmap).unsqueeze(0), 3).squeeze(0).numpy()
     landmark = data['landmark']
+    mask = data['mask_heatmap']
+    print(np.unique(mask), mask.shape)
     lm = torch.from_numpy(landmark).cuda()
     # print('gt:', landmark)
     # mask_distance = data['mask_distance']
@@ -129,8 +131,8 @@ for i in indices:
     image = (image.transpose(1, 2, 0) * dataset.std + dataset.mean) * 255.0
     image = image.astype(np.uint8)
     total_save = []
-    print(np.max(heatmap[0, :, :]), np.min(heatmap[0, :, :]),
-          heatmap[0, :, :][int(landmark[0][1].item()), int(landmark[0][0].item())])
+    # print(np.max(heatmap[0, :, :]), np.min(heatmap[0, :, :]),
+    #       heatmap[0, :, :][int(landmark[0][1].item()), int(landmark[0][0].item())])
     hm_gt = np.max(heatmap[:-1, :, :], axis=0, keepdims=True)
     hm_gt = np.concatenate([hm_gt, hm_gt, hm_gt], axis=0).transpose(1, 2, 0) * 255.0
     hm_gt = hm_gt.astype(np.uint8)

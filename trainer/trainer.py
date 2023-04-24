@@ -26,7 +26,8 @@ class Trainer:
                                               epsilon=self.config.epsilon,
                                               theta=self.config.theta,
                                               use_target_weight=self.config.use_target_weight,
-                                              loss_weight=self.config.loss_weight)
+                                              loss_weight=self.config.loss_weight,
+                                              use_weighted_mask=self.config.use_weighted_mask)
             self.criterion_cps = AdaptiveWingLoss(alpha=self.config.alpha,
                                                   omega=self.config.omega,
                                                   epsilon=self.config.epsilon,
@@ -44,23 +45,13 @@ class Trainer:
                              model=self.config.model)
         self.model = DataParallel(self.model).to(self.config.device)
         self.base_lr = self.config.lr
-        # self.optimizer_l = optim.RMSprop(params=self.model.module.branch1.parameters(),
-        #                                  lr=self.config.lr,
-        #                                  alpha=self.config.momentum,
-        #                                  weight_decay=self.config.weight_decay
-        #                                  )
-        # self.optimizer_r = optim.RMSprop(params=self.model.module.branch2.parameters(),
-        #                                  lr=self.config.lr,
-        #                                  alpha=self.config.momentum,
-        #                                  weight_decay=self.config.weight_decay)
+
         self.optimizer_l = optim.AdamW(params=self.model.module.branch1.parameters(),
                                        lr=self.config.lr,
-                                       # alpha=self.config.momentum,
                                        weight_decay=self.config.weight_decay
                                        )
         self.optimizer_r = optim.AdamW(params=self.model.module.branch2.parameters(),
                                        lr=self.config.lr,
-                                       # alpha=self.config.momentum,
                                        weight_decay=self.config.weight_decay)
         self.lr_scheduler_1 = optim.lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer_l,
                                                                    T_max=self.config.labeled_epoch * self.len_loader,
@@ -90,12 +81,12 @@ class Trainer:
             with torch.no_grad():
                 pred1 = self.model(image, step=1)
                 pred2 = self.model(image, step=2)
-                loss_sup_l = self.criterion(torch.sigmoid(pred1), heatmap, mask=mask)
-                loss_sup_r = self.criterion(torch.sigmoid(pred2), heatmap, mask=mask)
+                loss_sup_l = self.criterion(torch.sigmoid(pred1), heatmap, mask=None)
+                loss_sup_r = self.criterion(torch.sigmoid(pred2), heatmap, mask=None)
                 loss_meter_1.update(loss_sup_l.item())
                 loss_meter_2.update(loss_sup_r.item())
-                nme1 = self.evaluator(torch.sigmoid(pred1), heatmap, mask[:, :-1, :].squeeze(-1))
-                nme2 = self.evaluator(torch.sigmoid(pred2), heatmap, mask[:, :-1, :].squeeze(-1))
+                nme1 = self.evaluator(torch.sigmoid(pred1), landmark, mask[:, :-1, :].squeeze(-1))
+                nme2 = self.evaluator(torch.sigmoid(pred2), landmark, mask[:, :-1, :].squeeze(-1))
                 # nme1 = self.evaluator(torch.sigmoid(pred1), heatmap, None)
                 # nme2 = self.evaluator(torch.sigmoid(pred2), heatmap, None)
                 nme_meter_1.update(nme1.item())
@@ -128,7 +119,7 @@ class Trainer:
         aux_loss_meter_2 = AverageMeter()
         self.current_epoch = epoch
         supervised_dataloader = iter(self.labeled_train_loader)
-        for id in pbar:
+        for _ in pbar:
             batch = next(supervised_dataloader)
             self.optimizer_l.zero_grad()
             self.optimizer_r.zero_grad()

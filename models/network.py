@@ -15,9 +15,9 @@ class SingleNetwork(nn.Module):
     def forward(self, x):
         b, c, h, w = x.shape
         blocks = self.backbone(x)
-        pred = self.decoder(blocks[::-1])
-        pred = F.interpolate(pred, size=(h, w), mode='bilinear', align_corners=True)
-        return pred
+        heatmap, visible = self.decoder(blocks[::-1])
+        heatmap = F.interpolate(heatmap, size=(h, w), mode='bilinear', align_corners=True)
+        return heatmap, visible
 
 
 class Network(nn.Module):

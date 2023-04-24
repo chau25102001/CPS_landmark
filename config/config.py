@@ -54,6 +54,7 @@ def get_config(train=True):
     C.seed = 12345
     C.log_dir = "./log"
     C.mean_teacher = True
+    C.classification = False
 
     '''PATH CONFIG'''
     C.train_text_labeled = '/home/s/chaunm/CPS_landmarks/data/split/train_labeled_1_4.txt'
@@ -70,7 +71,7 @@ def get_config(train=True):
     C.mask_distance = False
     '''MODEL CONFIG'''
     # C.model = 'segformer'
-    # C.model_size = 'b3'
+    # C.model_size = 'b0'
 
     C.model = 'resnet'
     C.model_size = '18'
@@ -86,7 +87,8 @@ def get_config(train=True):
     C.loss_weight = 1
     C.use_aux_loss = False
     C.cps_loss_weight = 1.5
-    C.use_weighted_mask = False  # for a wing loss
+    C.class_loss_weight = 0.0
+    C.use_weighted_mask = True  # for a wing loss
     '''EMA config'''
     C.threshold = 0.7
     C.ema_decay = 0.5
@@ -102,7 +104,7 @@ def get_config(train=True):
     C.weight_decay = 1e-5
     C.momentum = 0.99
     C.device = 'cuda:0'
-    C.warm_up_epoch = 3
+    C.warm_up_epoch = 0
     # C.device = 'cpu'
     if C.joint_epoch == 0:
         C.mode = 'fully_supervised_' + C.ratio
@@ -110,6 +112,9 @@ def get_config(train=True):
         C.mode = "CPS_mean_teacher_" + C.ratio
     else:
         C.mode = "CPS_" + C.ratio
+
+    if C.classification:
+        C.mode += "_classification"
     C.name = C.model + C.model_size + "_" + C.mode
 
     C.snapshot_dir = os.path.join(C.log_dir, 'snapshot', C.name)

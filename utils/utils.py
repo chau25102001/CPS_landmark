@@ -101,6 +101,20 @@ def local_filter(logits, confidence_threshold=0.7):
     return mask
 
 
+class Accuracy(torch.nn.Module):
+    def __init__(self, threshold=0.5):
+        super(Accuracy, self).__init__()
+        self.threshold = threshold
+
+    def forward(self, pred, gt):
+        assert pred.shape == gt.shape, f'2 shapes must be equal, found :{pred.shape} and {gt.shape}'
+        pred = torch.sigmoid(pred)
+        pred = torch.where(pred > self.threshold, 1., 0.)
+        matched = torch.eq(pred, gt)
+        acc = torch.sum(matched) / pred.numel()
+        return acc
+
+
 class NME(torch.nn.Module):
     def __init__(self, h, w):
         super(NME, self).__init__()

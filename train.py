@@ -29,4 +29,6 @@ if __name__ == "__main__":
         shutil.rmtree(cfg.snapshot_dir)
 
     except KeyboardInterrupt:
-        trainer.save_checkpoint('checkpoint_last.pt')
+        shutil.rmtree(cfg.snapshot_dir)
+
+        # trainer.save_checkpoint('checkpoint_last.pt')

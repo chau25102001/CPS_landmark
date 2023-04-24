@@ -10,9 +10,11 @@ class VGGBlock(nn.Module):
         super().__init__()
         self.relu = nn.ReLU(inplace=True)
         self.conv1 = nn.Conv2d(in_channels, middle_channels, 3, padding=1)
-        self.bn1 = nn.GroupNorm(4, middle_channels)
+        # self.bn1 = nn.GroupNorm(4, middle_channels)
+        self.bn1 = nn.BatchNorm2d(middle_channels)
         self.conv2 = nn.Conv2d(middle_channels, out_channels, 3, padding=1)
-        self.bn2 = nn.GroupNorm(4, out_channels)
+        # self.bn2 = nn.GroupNorm(4, out_channels)
+        self.bn2 = nn.BatchNorm2d(out_channels)
 
     def forward(self, x):
         out = self.conv1(x)
@@ -26,6 +28,14 @@ class VGGBlock(nn.Module):
         return out
 
 
+class MyFlatten(nn.Module):
+    def __init__(self):
+        super(MyFlatten, self).__init__()
+
+    def forward(self, x):
+        return x[..., 0, 0]
+
+
 class UnetDecoder(nn.Module):
     def __init__(self, embed_dims, n_classes):
         super().__init__()
@@ -36,6 +46,22 @@ class UnetDecoder(nn.Module):
             for i in range(len(embed_dims_pad) - 1)
         ])
         self.last_layer = nn.Conv2d(embed_dims[-1], n_classes, kernel_size=1)
+        # self.class_head = nn.Sequential(
+        #     nn.Conv2d(embed_dims[0], embed_dims[0] // 4, 3, stride=1, padding=1, bias=False),
+        #     nn.ReLU(inplace=True),
+        #     nn.BatchNorm2d(embed_dims[0] // 4),
+        #     nn.Conv2d(embed_dims[0] // 4, embed_dims[0] // 4, 3, stride=1, padding=1, bias=False),
+        #     nn.ReLU(inplace=True),
+        #     nn.BatchNorm2d(embed_dims[0] // 4),
+        #     nn.AdaptiveAvgPool2d(1),
+        #     MyFlatten(),
+        #     nn.Linear(embed_dims[0] // 4, n_classes - 1, bias=True)
+        # )
+        self.class_head = nn.Sequential(nn.AdaptiveAvgPool2d(1),
+                                        MyFlatten(),
+                                        nn.Linear(embed_dims[0], n_classes - 1, bias=True))
+        # self.class_head = nn.Linear(embed_dims[0], n_classes - 1, bias=False)  # for keypoint classification
+        self.dummy = nn.Identity()
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -55,6 +81,7 @@ class UnetDecoder(nn.Module):
 
     def forward(self, xs):
         x = xs[0]
+        last_feature = self.dummy(x)
         for i in range(len(self.blocks)):
             if i == 0:
                 x = self.blocks[i](xs[i])
@@ -63,4 +90,6 @@ class UnetDecoder(nn.Module):
                     [F.interpolate(x, size=xs[i].shape[-2:], mode='bilinear', align_corners=True), xs[i]],
                     dim=1))
         x = self.last_layer(x)
-        return x
+        visible = self.class_head(last_feature)
+        # print(visible.shape)
+        return x, visible

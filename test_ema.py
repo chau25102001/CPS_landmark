@@ -75,7 +75,7 @@ model = MeanTeacher_CPS(num_classes=config.num_classes,
 
 model = DataParallel(model).to(config.device)
 
-checkpoint_name = "resnet18_CPS_mean_teacher_1_4_53"
+checkpoint_name = "resnet18_CPS_mean_teacher_1_4_55"
 checkpoint_path = os.path.join("./log/snapshot", checkpoint_name, 'checkpoint_best.pt')
 checkpoint = torch.load(checkpoint_path, map_location=config.device)
 model.module.load_state_dict(checkpoint['state_dict'])
