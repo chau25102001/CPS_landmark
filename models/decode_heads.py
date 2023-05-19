@@ -46,23 +46,23 @@ class UnetDecoder(nn.Module):
             for i in range(len(embed_dims_pad) - 1)
         ])
         self.last_layer = nn.Conv2d(embed_dims[-1], n_classes, kernel_size=1)
-        # self.class_head = nn.Sequential(
-        #     nn.Conv2d(embed_dims[0], embed_dims[0] // 4, 3, stride=1, padding=1, bias=False),
-        #     nn.ReLU(inplace=True),
-        #     nn.BatchNorm2d(embed_dims[0] // 4),
-        #     nn.Conv2d(embed_dims[0] // 4, embed_dims[0] // 4, 3, stride=1, padding=1, bias=False),
-        #     nn.ReLU(inplace=True),
-        #     nn.BatchNorm2d(embed_dims[0] // 4),
-        #     nn.AdaptiveAvgPool2d(1),
-        #     MyFlatten(),
-        #     nn.Linear(embed_dims[0] // 4, n_classes - 1, bias=True)
-        # )
-        self.class_head = nn.Sequential(nn.AdaptiveAvgPool2d(1),
-                                        MyFlatten(),
-                                        nn.Linear(embed_dims[0], n_classes - 1, bias=True))
+        self.class_head = nn.Sequential(
+            nn.Conv2d(embed_dims[0], embed_dims[0] // 4, 3, stride=1, padding=1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(embed_dims[0] // 4),
+            nn.Conv2d(embed_dims[0] // 4, embed_dims[0] // 4, 3, stride=1, padding=1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(embed_dims[0] // 4),
+            nn.AdaptiveAvgPool2d(1),
+            MyFlatten(),
+            nn.Linear(embed_dims[0] // 4, n_classes - 1, bias=True)
+        )
+        # self.class_head = nn.Sequential(nn.AdaptiveAvgPool2d(1),
+        #                                 MyFlatten(),
+        #                                 nn.Linear(embed_dims[0], n_classes - 1, bias=True))
         # self.class_head = nn.Linear(embed_dims[0], n_classes - 1, bias=False)  # for keypoint classification
         self.dummy = nn.Identity()
-        self.apply(self._init_weights)
+        # self.apply(self._init_weights)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):

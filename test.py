@@ -36,7 +36,7 @@ model = Network(num_classes=config.num_classes,
 
 model = DataParallel(model).to(config.device)
 
-checkpoint_name = "resnet18_fully_supervised_1_8_0"
+checkpoint_name = "hgnet18_fully_supervised_1_4_0/"
 checkpoint_path = os.path.join("./log/snapshot", checkpoint_name, 'checkpoint_best.pt')
 checkpoint = torch.load(checkpoint_path, map_location=config.device)
 model.module.load_state_dict(checkpoint['state_dict'])
@@ -52,23 +52,25 @@ os.mkdir(save_dir)
 l = len(dataset)
 index = list(range(l))
 pbar = tqdm(index, total=len(index), desc=f'Testing {checkpoint_name}')
+error_total = torch.zeros((1, config.num_classes - 1), device=config.device)
+
 for i in pbar:
     data = dataset[i]
     image = data['image']
     heatmap = data['heatmap']  # 20 x H x W
     mask = data['mask_heatmap'][0]
-    landmark = data['landmark'].astype(np.int)
+    landmark = data['landmark'].astype(int)
     # print(landmark.shape)
     # print(heatmap.shape)
     # print(mask.shape)
     image_save = image.copy()
     image = torch.from_numpy(image).unsqueeze(0).to(config.device)
     with torch.no_grad():
-        pred1 = model(image, step=1)
+        pred1, _ = model(image, step=1)
         pred1 = torch.sigmoid(pred1)
         pred1_ = pred1.clone()
 
-        pred2 = model(image, step=2)
+        pred2, _ = model(image, step=2)
         pred2 = torch.sigmoid(pred2)
         pred2_ = pred2.clone()
     pred = pred1.squeeze(0).cpu().numpy()  # 20 x H x W
@@ -88,6 +90,9 @@ for i in pbar:
     landmark_pred_2 = heatmap2coordinate(pred2_)
     nme1 = evaluator(landmark_pred_1, landmark_gt, torch.from_numpy(mask[:-1]).unsqueeze(0).to(config.device))
     nme2 = evaluator(landmark_pred_2, landmark_gt, torch.from_numpy(mask[:-1]).unsqueeze(0).to(config.device))
+    error = torch.sqrt(torch.sum((landmark_pred_1 - landmark_gt) ** 2, dim=-1)) / math.sqrt(
+        config.img_height * config.img_width) * 100  # 1, 19
+    error_total += error
 
     nme_meter1.update(nme1.item())
     nme_meter2.update(nme2.item())

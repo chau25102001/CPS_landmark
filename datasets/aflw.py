@@ -41,21 +41,21 @@ class TrainPreprocessing:
         self.mean = mean
         self.std = std
         self.transforms = A.Compose([
-            RandomRotate(30, p=0.5),
+            # RandomRotate(30, p=0.5),
             A.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1, p=0.5),
             # A.HorizontalFlip(p=0.5),
             A.GaussianBlur(p=0.2, blur_limit=3),
             A.ToGray(p=0.5),
 
-        ], keypoint_params=A.KeypointParams(format='xy', remove_invisible=False))
+        ], keypoint_params=A.KeypointParams(format='xy',
+                                            remove_invisible=False))  # transform when keypoints are available
         self.transforms_unsup = A.Compose([
-            RandomRotate(30, p=0.5),
+            # RandomRotate(30, p=0.5),
             A.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1, p=0.5),
             # A.HorizontalFlip(p=0.5),
             A.GaussianBlur(p=0.2, blur_limit=3),
             A.ToGray(p=0.5),
-
-        ])
+        ])  # transform when keypoins are not available
 
     def __call__(self, image, heatmap=None, landmark=None):
         if heatmap is None:
@@ -65,7 +65,7 @@ class TrainPreprocessing:
             output = self.transforms(image=image, mask=heatmap, keypoints=landmark)
             image = output['image']
             heatmap = output['mask']
-            landmark = np.array(output['keypoints'], dtype=np.int)
+            landmark = np.array(output['keypoints'], dtype=int)
             heatmap = heatmap.transpose(2, 0, 1).astype(np.float32)
         image = normalize(image, self.mean, self.std)
         image = image.transpose(2, 0, 1).astype(np.float32)
@@ -154,9 +154,9 @@ class AFLW(data.Dataset):
             mat_path = os.path.join(self.annotation_path, line)
             a = loadmat(mat_path)
             a['image_name'] = a['image_name'][0]
-            if not self.unsupervised:
+            if not self.unsupervised:  # full annotations
                 annotations.append(a)
-            else:
+            else:  # only image name
                 annotations.append({'image_name': a['image_name']})
         annotations = np.array(annotations)
         return annotations
@@ -171,7 +171,7 @@ class AFLW(data.Dataset):
         image = cv2.imread(os.path.join(self.image_path, image_name))
 
         if not self.unsupervised:
-            landmark = annotation['landmark'].astype(np.int)
+            landmark = annotation['landmark'].astype(int)
             heatmap = annotation['heatmap']
             headpose = annotation['headpose']
             mask_heatmap = annotation['mask_heatmap']

@@ -4,8 +4,69 @@ import torch.utils.data as data
 import torch
 from config.config import get_config
 import torch.nn as nn
+import numpy as np
 
-config = get_config(train=False)
+
+# config = get_config(train=False)
+
+def generate_pseudo(heatmap, mask_size):
+    c, h, w = heatmap.size(0), heatmap.size(1), heatmap.size(2)
+    # print(c,h,w)
+
+    score, index = torch.max(heatmap.view(c, -1), 1)
+    index_w = index % w
+    index_h = index // h
+
+    mask = torch.zeros_like(heatmap)
+    for i in range(c):
+        mask[i, max(index_h[i] - mask_size, 0):min(index_h[i] + mask_size + 1, h),
+        max(index_w[i] - mask_size, 0):min(index_w[i] + mask_size + 1, w)] = 1
+    pesudo = heatmap * mask
+
+    pesudo = torch.concat([pesudo[:-1, :, :], heatmap[-1, :, :].unsqueeze(0)], dim=0)
+
+    return pesudo
+
+
+def generate_gaussian(radius=12, sigma=4):
+    size = 2 * radius + 1
+    center = radius
+    heatmap = np.fromfunction(lambda y, x: ((x - center) ** 2 + (y - center) ** 2) \
+                                           / -2.0 / sigma ** 2,
+                              (size, size), dtype=int)
+
+    transformed_label = np.exp(heatmap)
+    transformed_label = torch.from_numpy(transformed_label)
+    return transformed_label
+
+
+def generate_pseudo_label(heatmap, mask):
+    '''
+    :param heatmap: c x h x w
+    :param mask: h x w
+    :return:
+    '''
+    c, h, w = heatmap.size(0), heatmap.size(1), heatmap.size(2)
+    score, index = torch.max(heatmap.view(c, -1), 1)
+    index_w = (index % w).int()
+    index_h = (index // h).int()
+    zero_mask = torch.zeros_like(heatmap, device=heatmap.device, dtype=heatmap.dtype)
+    mask_size = (mask.size(0) - 1) // 2  # radius
+
+    for i in range(c - 1):  # dont generate background
+        h_peak = index_h[i]
+        w_peak = index_w[i]
+        start_y = max(h_peak - mask_size, 0)
+        end_y = min(h_peak + mask_size + 1, h)
+        start_x = max(w_peak - mask_size, 0)
+        end_x = min(w_peak + mask_size + 1, w)
+        print(start_y, end_y, start_x, end_x, i)
+        zero_mask[i, start_y:end_y, start_x:end_x] = mask[
+                                                     mask_size - h_peak + start_y:mask_size - h_peak + end_y,
+                                                     mask_size - w_peak + start_x:mask_size - w_peak + end_x]
+    positive_mask = torch.amax(zero_mask[:-1, :, :], dim=0)
+    zero_mask[-1, :, :] = 1 - positive_mask
+    return zero_mask
 
 
 class AverageMeter(object):
@@ -69,8 +130,8 @@ class InfiniteDataLoader(data.DataLoader):
         return batch
 
 
-pool = torch.nn.MaxPool1d(kernel_size=config.img_height * config.img_width, stride=config.img_height * config.img_width,
-                          return_indices=True)
+# pool = torch.nn.MaxPool1d(kernel_size=config.img_height * config.img_width, stride=config.img_height * config.img_width,
+#                           return_indices=True)
 
 
 def heatmap2coordinate(heatmap):
@@ -138,9 +199,10 @@ class NME(torch.nn.Module):
             mask = 1
         else:
             norm = torch.sum(mask, dim=1)
+
         loss = torch.sqrt(torch.sum((pred - gt) ** 2, dim=-1)) * mask / math.sqrt(self.w * self.h)
-        loss = torch.mean(torch.sum(loss, dim=1) / norm) * 100  # mean over batch
-        return loss
+        loss = torch.sum(loss, dim=1) / norm * 100  # mean over num keypoints
+        return torch.mean(loss)
 
 
 def freeze_bn(model: torch.nn.Module):
@@ -158,12 +220,10 @@ def unfreeze_bn(model: torch.nn.Module):
 
 
 if __name__ == "__main__":
-    norm = torch.nn.BatchNorm2d(num_features=3)
-    a = torch.rand(5, 3, 128, 128)
-    out = norm(a)
-    print(norm.running_mean)
-    out = norm(a)
-    print(norm.running_mean)
-    freeze_bn(norm)
-    out = norm(a)
-    print(norm.running_mean)
+    import matplotlib.pyplot as plt
+
+    a = generate_gaussian().cpu().numpy()
+    print(a.shape)
+    a = (a * 255.0).astype(int)
+    plt.imshow(a)
+    plt.show()

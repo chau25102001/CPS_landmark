@@ -106,7 +106,7 @@ if os.path.exists(save_dir):
 os.mkdir(save_dir)
 count = 0
 total = len(indices)
-num_cpu = 8
+num_cpu = 1
 partition = total // num_cpu
 
 
@@ -166,7 +166,7 @@ def generate(ids, start):
         landmark[:, 1] = (landmark[:, 1] - bbox[2]) / bw * save_size[1]
         # landmark = landmark
         heatmap, mask_heatmap = generate_label_map(
-            np.concatenate([landmark.copy().astype(np.int).transpose(1, 0), np.expand_dims(mask, 0)]),
+            np.concatenate([landmark.copy().astype(int).transpose(1, 0), np.expand_dims(mask, 0)]),
             save_size[1], save_size[0], 4, 1, not has_landmark, mask, 'gaussian')
         mask_heatmap = mask_heatmap[0][0]
         new_name = str(index) + "_" + image_name.replace("/", "_")

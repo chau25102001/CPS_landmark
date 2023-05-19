@@ -7,7 +7,7 @@ class MSELoss(nn.Module):
         super(MSELoss, self).__init__()
         self.criterion = nn.MSELoss(reduction='none')
 
-    def forward(self, logits, gts, mask):
+    def forward(self, logits, gts, mask=None):
         if mask is not None:
             return torch.mean(self.criterion(logits, gts) * mask.unsqueeze(-1))
         else:
@@ -185,7 +185,7 @@ class AdaptiveWingLoss(torch.nn.Module):
             loss_mat = loss_mat * mask
         if self.use_weighted_mask:
             weighted_mask = torch.nn.functional.max_pool2d(y, 3, stride=1, padding=1)
-            weighted_mask[:, -1, :, :] = 0
+            weighted_mask[:, -1, :, :] = 0  # background
             weighted_mask = torch.where(weighted_mask > 0.2, 1., 0.)
             loss_mat = loss_mat * (1 + weighted_mask * 10)
         return loss_mat.mean() if self.reduction == "mean" else loss_mat

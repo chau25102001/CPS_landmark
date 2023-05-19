@@ -6,7 +6,7 @@ import torchvision.models as models
 class ResNet18(nn.Module):
     def __init__(self):
         super(ResNet18, self).__init__()
-        self.resnet = models.resnet18(pretrained=True)
+        self.resnet = models.resnet18(pretrained=False)
         self.embed_dims = [64, 128, 256, 512]
         # self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=2, padding=1, bias=False)
 

@@ -15,8 +15,13 @@ if __name__ == "__main__":
     else:
         cfg = get_config(train=True)
     if cfg.mean_teacher:
+        print("ema")
         trainer = EMATrainer(cfg)
+    elif cfg.fully_supervised:
+        print("fully supervised")
+        trainer = FullySupervisedTrainer(cfg)
     else:
+        print("cps")
         trainer = Trainer(cfg)
 
     try:

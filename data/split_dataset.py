@@ -11,7 +11,7 @@ args = parser.parse_args()
 train_annot_path = os.path.join(args.train_path, "annotations")
 test_annot_path = os.path.join(args.test_path, "annotations")
 
-save_text_dir = "./data/split"
+save_text_dir = "split"
 if os.path.exists(save_text_dir):
     shutil.rmtree(save_text_dir)
 

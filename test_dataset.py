@@ -10,11 +10,12 @@ import math
 import torch.nn.functional as F
 import shutil
 from scipy.ndimage import grey_dilation
+from utils.utils import generate_gaussian, generate_pseudo_label
 
 dataset = AFLW(
-    '/home/s/chaunm/CPS_landmarks/data/split/train_labeled_1_8.txt',
-    '/home/s/chaunm/DATA/AFLW/train_128_4/annotations',
-    '/home/s/chaunm/DATA/AFLW/train_128_4/images',
+    '/home/s/chaunm/CPS_landmarks/data/split_neck/train_labeled_1_8.txt',
+    '/home/s/chaunm/DATA/AFLW/train_neck_128_4/annotations',
+    '/home/s/chaunm/DATA/AFLW/train_neck_128_4/images',
     unsupervised=False,
     training=True,
 )
@@ -110,15 +111,17 @@ def channelwise_dilation(input_tensor, kernel_size):
     return output_tensor
 
 
+gaussian_mask = generate_gaussian()
 for i in indices:
     data = dataset[i]
     image = data['image']
     heatmap = data['heatmap']
-    heatmap = channelwise_dilation(torch.from_numpy(heatmap).unsqueeze(0), 3).squeeze(0).numpy()
+    # heatmap = channelwise_dilation(torch.from_numpy(heatmap).unsqueeze(0), 3).squeeze(0).numpy()
     landmark = data['landmark']
     mask = data['mask_heatmap']
-    print(np.unique(mask), mask.shape)
-    lm = torch.from_numpy(landmark).cuda()
+    heatmap_ = torch.from_numpy(heatmap)
+    heatmap_pseudo = generate_pseudo_label(heatmap_, gaussian_mask).cpu().numpy()
+
     # print('gt:', landmark)
     # mask_distance = data['mask_distance']
     # landmark1 = heatmap2coordinate(torch.from_numpy(heatmap).unsqueeze(0).contiguous()).squeeze(0).cpu().numpy()
@@ -133,16 +136,21 @@ for i in indices:
     total_save = []
     # print(np.max(heatmap[0, :, :]), np.min(heatmap[0, :, :]),
     #       heatmap[0, :, :][int(landmark[0][1].item()), int(landmark[0][0].item())])
-    hm_gt = np.max(heatmap[:-1, :, :], axis=0, keepdims=True)
-    hm_gt = np.concatenate([hm_gt, hm_gt, hm_gt], axis=0).transpose(1, 2, 0) * 255.0
+    hm_gt = heatmap[:, :, :] * 255.0
+    # hm_gt = np.concatenate([hm_gt, hm_gt, hm_gt], axis=0).transpose(1, 2, 0) * 255.0
     hm_gt = hm_gt.astype(np.uint8)
-    for p in range(19):
-        point = int(landmark[p][0].item()), int(landmark[p][1].item())
-        # image_save_ = image.copy()
-        image = cv2.circle(image, point, 1, (255, 0, 0), 1)
-        # save = np.concatenate([image_save_, hm_gt.copy()], axis=0)
-        # total_save.append(save)
-    total_save = np.concatenate([image, hm_gt], axis=0)
+
+    hm_pd = (heatmap_pseudo * 255.0).astype(np.uint8)
+    print(mask)
+    for p in range(6):
+        if p < 5:
+            point = int(landmark[p][0].item()), int(landmark[p][1].item())
+            image = cv2.circle(image, point, 1, (255, 0, 0), 1)
+        hm_p = np.concatenate([hm_gt[p:p + 1], hm_gt[p:p + 1], hm_gt[p:p + 1]], axis=0).transpose(1, 2, 0)
+        hm_pd_p = np.concatenate([hm_pd[p:p + 1], hm_pd[p:p + 1], hm_pd[p:p + 1]], axis=0).transpose(1, 2, 0)
+        save = np.concatenate([image.copy(), hm_p, hm_pd_p], axis=0)
+        total_save.append(save)
+    total_save = np.concatenate(total_save, axis=1)
     cv2.imwrite(os.path.join(save_dir, f"{i}.png"),
                 total_save)
     # print(headpose * 180 / math.pi)

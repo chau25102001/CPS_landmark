@@ -13,10 +13,17 @@ from utils.utils import AverageMeter, NME, freeze_bn, unfreeze_bn, local_filter,
 import wandb
 
 
+def ema_decay_scheduler(start_ema_decay, end_ema_decay, max_step, step):
+    if step > max_step:
+        return end_ema_decay
+    else:
+        return start_ema_decay + (end_ema_decay - start_ema_decay) / max_step * step
+
+
 class EMATrainer:
     def __init__(self, config):
-        self.labeled_train_loader = get_train_loader(unsupervised=False)
-        self.unlabeled_train_loader = get_train_loader(unsupervised=True)
+        self.labeled_train_loader = get_train_loader(unsupervised=False)  # __getitem__ return image and annotations
+        self.unlabeled_train_loader = get_train_loader(unsupervised=True)  # __getitem__ return image only
         self.len_loader = max(len(self.labeled_train_loader), len(self.unlabeled_train_loader))
         self.test_loader = get_test_loader()
         self.config = config
@@ -56,25 +63,33 @@ class EMATrainer:
                                        # alpha=self.config.momentum,
                                        weight_decay=self.config.weight_decay
                                        )
+        # self.optimizer_l = optim.RMSprop(params=self.model.parameters(),
+        #                                  lr=self.config.lr,
+        #                                  alpha=0.99,
+        #                                  weight_decay=self.config.weight_decay)
         self.optimizer_r = optim.AdamW(params=self.model.module.branch2.parameters(),
                                        lr=self.config.lr,
                                        # alpha=self.config.momentum,
                                        weight_decay=self.config.weight_decay)
+        # self.optimizer_r = optim.RMSprop(params=self.model.parameters(),
+        #                                  lr=self.config.lr,
+        #                                  alpha=0.99,
+        #                                  weight_decay=self.config.weight_decay)
         self.lr_scheduler_1 = optim.lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer_l,
                                                                    T_max=self.config.labeled_epoch * self.len_loader,
-                                                                   eta_min=1e-5)
+                                                                   eta_min=1e-6)
         self.lr_scheduler_2 = optim.lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer_l,
                                                                    T_max=self.config.joint_epoch * self.len_loader,
-                                                                   eta_min=1e-5)
+                                                                   eta_min=1e-6)
         self.current_epoch = 0
         self.evaluator = NME(h=self.config.img_height, w=self.config.img_width)
         self.evaluator_class = Accuracy(threshold=0.5)
-        wandb.init(project='Cross Pseudo Label Mean Teacher AFLW', entity='chaunm', resume=False, config=config,
+        wandb.init(project='Cross Pseudo Label EMA AFLW-neck', entity='chaunm', resume=False, config=config,
                    name=self.config.name)
 
     def _eval_epoch(self, epoch):
         self.model.eval()
-        pbar = tqdm(self.test_loader, total=len(self.test_loader), desc=f'Eval epoch {epoch}')
+        pbar = tqdm(self.test_loader, total=len(self.test_loader), desc=f'Eval epoch {epoch + 1}')
         loss_meter_student_1 = AverageMeter()
         loss_meter_student_2 = AverageMeter()
         loss_meter_teacher_1 = AverageMeter()
@@ -106,8 +121,8 @@ class EMATrainer:
                 s_pred_2, t_pred_2, s_class_2, t_class_2 = self.model(image, step=2)
 
                 # loss for model 1
-                loss_sup_student_1 = self.criterion(torch.sigmoid(s_pred_1), heatmap)
-                loss_sup_teacher_1 = self.criterion(torch.sigmoid(t_pred_1), heatmap)
+                loss_sup_student_1 = self.criterion(torch.sigmoid(s_pred_1), heatmap, mask)
+                loss_sup_teacher_1 = self.criterion(torch.sigmoid(t_pred_1), heatmap, mask)
                 loss_meter_student_1.update(loss_sup_student_1.item())
                 loss_meter_teacher_1.update(loss_sup_teacher_1.item())
 
@@ -115,6 +130,17 @@ class EMATrainer:
                 nme_teacher_1 = self.evaluator(torch.sigmoid(t_pred_1), landmark, mask=mask[:, :-1, :].squeeze(-1))
                 nme_meter_student_1.update(nme_student_1.item())
                 nme_meter_teacher_1.update(nme_teacher_1.item())
+
+                # loss for model 2
+                loss_sup_student_2 = self.criterion(torch.sigmoid(s_pred_2), heatmap, mask)
+                loss_sup_teacher_2 = self.criterion(torch.sigmoid(t_pred_2), heatmap, mask)
+                loss_meter_student_2.update(loss_sup_student_2.item())
+                loss_meter_teacher_2.update(loss_sup_teacher_2.item())
+
+                nme_student_2 = self.evaluator(torch.sigmoid(s_pred_2), landmark, mask=mask[:, :-1, :].squeeze(-1))
+                nme_teacher_2 = self.evaluator(torch.sigmoid(t_pred_2), landmark, mask=mask[:, :-1, :].squeeze(-1))
+                nme_meter_student_2.update(nme_student_2.item())
+                nme_meter_teacher_2.update(nme_teacher_2.item())
                 if self.config.classification:
                     loss_class_student_1 = self.criterion_class(s_class_1, class_label)
                     loss_class_teacher_1 = self.criterion_class(t_class_1, class_label)
@@ -126,17 +152,6 @@ class EMATrainer:
                     acc_meter_student_1.update(acc_student_1.item())
                     acc_meter_teacher_1.update(acc_teacher_1.item())
 
-                # loss for model 2
-                loss_sup_student_2 = self.criterion(torch.sigmoid(s_pred_2), heatmap)
-                loss_sup_teacher_2 = self.criterion(torch.sigmoid(t_pred_2), heatmap)
-                loss_meter_student_2.update(loss_sup_student_2.item())
-                loss_meter_teacher_2.update(loss_sup_teacher_2.item())
-
-                nme_student_2 = self.evaluator(torch.sigmoid(s_pred_2), landmark, mask=mask[:, :-1, :].squeeze(-1))
-                nme_teacher_2 = self.evaluator(torch.sigmoid(t_pred_2), landmark, mask=mask[:, :-1, :].squeeze(-1))
-                nme_meter_student_2.update(nme_student_2.item())
-                nme_meter_teacher_2.update(nme_teacher_2.item())
-                if self.config.classification:
                     loss_class_student_2 = self.criterion_class(s_class_2, class_label)
                     loss_class_teacher_2 = self.criterion_class(t_class_2, class_label)
                     loss_class_meter_student_2.update(loss_class_student_2.item())
@@ -212,8 +227,8 @@ class EMATrainer:
             s_pred_2, t_pred_2 = self.model(image, step=2)
 
             # loss for model 1
-            loss_sup_student_1 = self.criterion(torch.sigmoid(s_pred_1), heatmap)
-            loss_sup_teacher_1 = self.criterion(torch.sigmoid(t_pred_1), heatmap)
+            loss_sup_student_1 = self.criterion(torch.sigmoid(s_pred_1), heatmap, mask)
+            loss_sup_teacher_1 = self.criterion(torch.sigmoid(t_pred_1), heatmap, mask)
             loss_meter_student_1.update(loss_sup_student_1.item())
             loss_meter_teacher_1.update(loss_sup_teacher_1.item())
 
@@ -274,8 +289,8 @@ class EMATrainer:
 
     def _train_joint_epoch(self, epoch):
         self.model.train()
-        pbar = tqdm(range(self.len_loader), total=self.len_loader,
-                    desc=f'Training joinly epoch {epoch}/{self.config.joint_epoch}')
+        pbar = tqdm(enumerate(range(self.len_loader)), total=self.len_loader,
+                    desc=f'Training joinly epoch {epoch + 1}/{self.config.joint_epoch}')
         supervised_dataloader = iter(self.labeled_train_loader)
         unsupervised_dataloader = iter(self.unlabeled_train_loader)
         self.current_epoch = epoch
@@ -300,76 +315,27 @@ class EMATrainer:
         acc_meter_teacher_1 = AverageMeter()
         acc_meter_teacher_2 = AverageMeter()
 
-        for _ in pbar:
+        for i, _ in pbar:
             self.optimizer_l.zero_grad()
             self.optimizer_r.zero_grad()
             labeled_batch = next(supervised_dataloader)
             unlabeled_batch = next(unsupervised_dataloader)
 
+            unlabeled_image = unlabeled_batch['image'].to(self.config.device)
             labeled_image = labeled_batch['image'].to(self.config.device)
             heatmap = labeled_batch['heatmap'].to(self.config.device)
-            unlabeled_image = unlabeled_batch['image'].to(self.config.device)
             mask = labeled_batch['mask_heatmap'].squeeze(1).unsqueeze(2).to(self.config.device)  # bsize x 1 x (k+1)
             class_label = labeled_batch['mask_heatmap'].squeeze(1)[:, :-1].to(self.config.device)  # bsize x k
             landmark = labeled_batch['landmark'].to(self.config.device)
-            with torch.no_grad():  # generate pseudo labels from teacher predictions
-                self.model.eval()
-                unlabled_output_1 = self.model(unlabeled_image, step=1)
-                unlabled_output_2 = self.model(unlabeled_image, step=2)
-                unsup_pseudo_logits_teacher_1 = unlabled_output_1[1].detach()
-                unsup_pseudo_logits_teacher_2 = unlabled_output_2[1].detach()
-                unsup_pseudo_class_teacher_1 = unlabled_output_1[3].detach()
-                unsup_pseudo_class_teacher_2 = unlabled_output_2[3].detach()
-
-                labeled_output_1 = self.model(labeled_image, step=1)
-                labeled_output_2 = self.model(labeled_image, step=2)
-                sup_pseudo_logits_teacher_1 = labeled_output_1[1].detach()
-                sup_pseudo_logits_teacher_2 = labeled_output_2[1].detach()
-                sup_pseudo_class_teacher_1 = labeled_output_1[3].detach()
-                sup_pseudo_class_teacher_2 = labeled_output_2[3].detach()
-
-                # heatmap pseudo label
-                unsup_pseudo_label_teacher_1 = torch.sigmoid(unsup_pseudo_logits_teacher_1)
-                unsup_pseudo_label_teacher_2 = torch.sigmoid(unsup_pseudo_logits_teacher_2)
-
-                sup_pseudo_label_teacher_1 = torch.sigmoid(sup_pseudo_logits_teacher_1)
-                sup_pseudo_label_teacher_2 = torch.sigmoid(sup_pseudo_logits_teacher_2)
-
-                unsup_mask_teacher_1 = local_filter(unsup_pseudo_label_teacher_1, self.config.threshold)
-                unsup_mask_teacher_2 = local_filter(unsup_pseudo_label_teacher_2, self.config.threshold)
-
-                sup_mask_teacher_1 = local_filter(sup_pseudo_label_teacher_1, self.config.threshold)
-                sup_mask_teacher_2 = local_filter(sup_pseudo_label_teacher_2, self.config.threshold)
-
-                # classification pseudo label (hard label)
-                unsup_pseudo_class_label_teacher_1 = torch.where(torch.sigmoid(unsup_pseudo_class_teacher_1) >= 0.5, 1.,
-                                                                 0.)
-                unsup_pseudo_class_label_teacher_2 = torch.where(torch.sigmoid(unsup_pseudo_class_teacher_2) >= 0.5, 1.,
-                                                                 0.)
-                unsup_mask_class_teacher_1 = torch.where(
-                    torch.sigmoid(unsup_pseudo_class_teacher_1) >= self.config.class_threshold, 1.,
-                    0.)
-                unsup_mask_class_teacher_2 = torch.where(
-                    torch.sigmoid(unsup_pseudo_class_teacher_2) >= self.config.class_threshold, 1.,
-                    0.)
-
-                sup_pseudo_class_label_teacher_1 = torch.where(torch.sigmoid(sup_pseudo_class_teacher_1) >= 0.5, 1., 0.)
-                sup_pseudo_class_label_teacher_2 = torch.where(torch.sigmoid(sup_pseudo_class_teacher_2) >= 0.5, 1., 0.)
-                sup_mask_class_teacher_1 = torch.where(
-                    torch.sigmoid(sup_pseudo_class_teacher_1) >= self.config.class_threshold, 1., 0.)
-                sup_mask_class_teacher_2 = torch.where(
-                    torch.sigmoid(sup_pseudo_class_teacher_2) >= self.config.class_threshold, 1., 0.)
-
-            self.model.train()
 
             logits_sup_student_1, logits_sup_teacher_1, class_sup_student_1, class_sup_teacher_1 = self.model(
                 labeled_image, step=1)
             logits_sup_student_2, logits_sup_teacher_2, class_sup_student_2, class_sup_teacher_2 = self.model(
                 labeled_image, step=2)
             sup_loss_student_1 = self.criterion(torch.sigmoid(logits_sup_student_1),
-                                                heatmap, mask=None)
+                                                heatmap, mask=mask)
             sup_loss_student_2 = self.criterion(torch.sigmoid(logits_sup_student_2),
-                                                heatmap, mask=None)
+                                                heatmap, mask=mask)
             # print("class label: ", class_label)
             # print("sup student 1: ", class_sup_student_1)
 
@@ -384,6 +350,32 @@ class EMATrainer:
                 loss_class_meter_student_1.update(sup_class_loss_student_1.item())
                 loss_class_meter_student_2.update(sup_class_loss_student_2.item())
             if epoch >= self.config.warm_up_epoch:  # train without CPS for some epoch (default = 0)
+                with torch.no_grad():  # generate pseudo labels from teacher predictions
+                    # self.model.eval()
+                    unlabled_output_1 = self.model(unlabeled_image, step=1)
+                    unlabled_output_2 = self.model(unlabeled_image, step=2)
+                    unsup_pseudo_logits_teacher_1 = unlabled_output_1[1].detach()
+                    unsup_pseudo_logits_teacher_2 = unlabled_output_2[1].detach()
+
+                    labeled_output_1 = self.model(labeled_image, step=1)
+                    labeled_output_2 = self.model(labeled_image, step=2)
+                    sup_pseudo_logits_teacher_1 = labeled_output_1[1].detach()
+                    sup_pseudo_logits_teacher_2 = labeled_output_2[1].detach()
+
+                    # heatmap pseudo label
+                    unsup_pseudo_label_teacher_1 = torch.sigmoid(unsup_pseudo_logits_teacher_1)
+                    unsup_pseudo_label_teacher_2 = torch.sigmoid(unsup_pseudo_logits_teacher_2)
+
+                    sup_pseudo_label_teacher_1 = torch.sigmoid(sup_pseudo_logits_teacher_1)
+                    sup_pseudo_label_teacher_2 = torch.sigmoid(sup_pseudo_logits_teacher_2)
+
+                    unsup_mask_teacher_1 = local_filter(unsup_pseudo_label_teacher_1, self.config.threshold)
+                    unsup_mask_teacher_2 = local_filter(unsup_pseudo_label_teacher_2, self.config.threshold)
+
+                    sup_mask_teacher_1 = local_filter(sup_pseudo_label_teacher_1, self.config.threshold)
+                    sup_mask_teacher_2 = local_filter(sup_pseudo_label_teacher_2, self.config.threshold)
+
+                # self.model.train()
                 # cross pseudo supervision + ema + local filter
                 logits_unsup_student_1, _, class_unsup_student_1, _ = self.model(unlabeled_image, step=1)
                 logits_unsup_student_2, _, class_unsup_student_2, _ = self.model(unlabeled_image, step=2)
@@ -404,6 +396,34 @@ class EMATrainer:
 
                 cps_loss = sup_cps_loss + unsup_cps_loss
                 if self.config.classification:
+                    unsup_pseudo_class_teacher_1 = unlabled_output_1[3].detach()
+                    unsup_pseudo_class_teacher_2 = unlabled_output_2[3].detach()
+
+                    sup_pseudo_class_teacher_1 = labeled_output_1[3].detach()
+                    sup_pseudo_class_teacher_2 = labeled_output_2[3].detach()
+                    # classification pseudo label (hard label)
+                    unsup_pseudo_class_label_teacher_1 = torch.where(torch.sigmoid(unsup_pseudo_class_teacher_1) >= 0.5,
+                                                                     1.,
+                                                                     0.)
+                    unsup_pseudo_class_label_teacher_2 = torch.where(torch.sigmoid(unsup_pseudo_class_teacher_2) >= 0.5,
+                                                                     1.,
+                                                                     0.)
+                    unsup_mask_class_teacher_1 = torch.where(
+                        torch.sigmoid(unsup_pseudo_class_teacher_1) >= self.config.class_threshold, 1.,
+                        0.)
+                    unsup_mask_class_teacher_2 = torch.where(
+                        torch.sigmoid(unsup_pseudo_class_teacher_2) >= self.config.class_threshold, 1.,
+                        0.)
+
+                    sup_pseudo_class_label_teacher_1 = torch.where(torch.sigmoid(sup_pseudo_class_teacher_1) >= 0.5, 1.,
+                                                                   0.)
+                    sup_pseudo_class_label_teacher_2 = torch.where(torch.sigmoid(sup_pseudo_class_teacher_2) >= 0.5, 1.,
+                                                                   0.)
+                    sup_mask_class_teacher_1 = torch.where(
+                        torch.sigmoid(sup_pseudo_class_teacher_1) >= self.config.class_threshold, 1., 0.)
+                    sup_mask_class_teacher_2 = torch.where(
+                        torch.sigmoid(sup_pseudo_class_teacher_2) >= self.config.class_threshold, 1., 0.)
+
                     unsup_cps_loss_class = self.criterion_class(class_unsup_student_1,
                                                                 unsup_pseudo_class_label_teacher_2,
                                                                 mask=unsup_mask_class_teacher_2) \
@@ -427,7 +447,11 @@ class EMATrainer:
 
             self.optimizer_l.step()
             self.optimizer_r.step()
-            self.model.module._update_ema_variables(self.config.ema_decay)  # update weights for 2 teachers
+            ema_decay = ema_decay_scheduler(self.config.start_ema_decay,
+                                            self.config.end_ema_decay,
+                                            max_step=self.config.ema_linear_epoch * self.len_loader,
+                                            step=epoch * self.len_loader + i)
+            self.model.module._update_ema_variables(ema_decay)  # update weights for 2 teachers
             self.lr_scheduler_2.step()
             lr = self.lr_scheduler_2.get_last_lr()[0]
             wandb.log({'lr': lr})

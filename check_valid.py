@@ -1,36 +1,36 @@
 import os
+from scipy.io import loadmat
 
 train_file_1 = open("./data/split/train_labeled_1_4.txt", 'r').readlines()
 train_file_2 = open("./data/split/train_unlabeled_1_4.txt", 'r').readlines()
 
 test_file = open('./data/split/test.txt', 'r').readlines()
 
+train_annotations_path = '/home/s/chaunm/DATA/AFLW/train_128_4/annotations'
+train_images_path = '/home/s/chaunm/DATA/AFLW/train_128_4/images'
+test_annotations_path = '/home/s/chaunm/DATA/AFLW/test_128_4/annotations'
+test_images_path = '/home/s/chaunm/DATA/AFLW/test_128_4/images'
 
-def process_file(f):
-    lines = []
+
+def process_file(f, annotation_path, unsupervised=False):
+    image_names = []
     for line in f:
-        line = line.rstrip().replace("\n", '')
-        lines.append(line)
-    return lines
+        line = line.rstrip()
+        mat_path = os.path.join(annotation_path, line)
+        a = loadmat(mat_path)
+        a['image_name'] = a['image_name'][0].split("_")[-1]
+        image_names.append(a['image_name'])
+    return image_names
 
 
-train_file_1 = process_file(train_file_1)
-train_file_2 = process_file(train_file_2)
-test_file = process_file(test_file)
-c = 0
-for l in train_file_1:
-    if l in test_file:
-        print("file labeled: ", l)
-        c += 1
-print(c)
+train_annot_supervise = process_file(train_file_1, train_annotations_path, unsupervised=True)
+train_annot_unsupervise = process_file(train_file_2, train_annotations_path, unsupervised=True)
+test_annot = process_file(test_file, test_annotations_path, unsupervised=True)
 
-for l in train_file_2:
-    if l in test_file:
-        print("file unlabeled: ", l)
-        c += 1
+for name in train_annot_supervise:
+    if name in train_annot_unsupervise or name in test_annot:
+        print("test 1: ", name)
 
-print(c)
-
-for l in train_file_1:
-    if l in train_file_2:
-        print(l)
+for name in train_annot_unsupervise:
+    if name in train_annot_supervise or name in test_annot:
+        print("test 1: ", name)
