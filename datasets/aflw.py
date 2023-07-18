@@ -6,13 +6,10 @@ import torch.utils.data as data
 import albumentations as A
 from scipy.io import loadmat
 from termcolor import colored
-from config.config import get_config
 from utils.utils import InfiniteDataLoader
 from albumentations.augmentations.geometric.rotate import Rotate
 from albumentations.augmentations.geometric import functional as F
 from albumentations.augmentations.crops import functional as FCrops
-
-config = get_config(train=False)
 
 
 class RandomRotate(Rotate):
@@ -45,6 +42,7 @@ class TrainPreprocessing:
             A.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1, p=0.5),
             # A.HorizontalFlip(p=0.5),
             A.GaussianBlur(p=0.2, blur_limit=3),
+            # A.ISONoise(p=0.5),
             A.ToGray(p=0.5),
 
         ], keypoint_params=A.KeypointParams(format='xy',
@@ -54,6 +52,7 @@ class TrainPreprocessing:
             A.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1, p=0.5),
             # A.HorizontalFlip(p=0.5),
             A.GaussianBlur(p=0.2, blur_limit=3),
+            # A.ISONoise(p=0.5),
             A.ToGray(p=0.5),
         ])  # transform when keypoins are not available
 
@@ -86,7 +85,7 @@ class ValPreprocessing:
         return image, heatmap, landmark
 
 
-def get_train_loader(unsupervised=False):
+def get_train_loader(config, unsupervised=False):
     if unsupervised:
         dataset = AFLW(config.train_text_unlabeled,
                        config.train_annotations_path,
@@ -113,7 +112,7 @@ def get_train_loader(unsupervised=False):
     return dataloader
 
 
-def get_test_loader():
+def get_test_loader(config):
     dataset = AFLW(config.test_text,
                    config.test_annotations_path,
                    config.test_images_path,
@@ -169,7 +168,7 @@ class AFLW(data.Dataset):
         image_name = annotation['image_name']
         heatmap = None
         image = cv2.imread(os.path.join(self.image_path, image_name))
-
+        label = 1 if 'OK' in image_name else 0
         if not self.unsupervised:
             landmark = annotation['landmark'].astype(int)
             heatmap = annotation['heatmap']
@@ -178,8 +177,8 @@ class AFLW(data.Dataset):
             if self.transforms is not None:
                 image, heatmap, landmark = self.transforms(image, heatmap, landmark)
             return {'image': image, 'heatmap': heatmap, 'landmark': landmark, 'headpose': headpose,
-                    'mask_heatmap': mask_heatmap}
+                    'mask_heatmap': mask_heatmap, 'label': label, 'name': image_name}
         else:
             if self.transforms is not None:
                 image, _, _ = self.transforms(image, heatmap, None)
-            return {'image': image}
+            return {'image': image, 'label': label, 'name': image_name}

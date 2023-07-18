@@ -68,18 +68,19 @@ def generate_label_map(pts, height, width, sigma, downsample, nopoints, mask, ct
     return heatmap, mask_heatmap
 
 
-root = "/home/s/chaunm/DATA/AFLW"
+root = "/home/s/chaunm/DATA/SIDE"
 save_size = (128, 128)
 num_cpu = 8
-pth_file = "/home/s/chaunm/DATA/AFLW/neck-paper-split/train.pth"
-pth_test_file = "/home/s/chaunm/DATA/AFLW/neck-paper-split/test.pth"
+
+pth_file = "/home/s/chaunm/DATA/SIDE/train.pth"
+pth_test_file = "/home/s/chaunm/DATA/SIDE/test.pth"
 path_annotation = torch.load(pth_file, map_location='cpu')
 path_test_annotation = torch.load(pth_test_file, map_location='cpu')
 all_annotation = path_annotation + path_test_annotation
 sep_id = len(path_annotation)
 partition = len(all_annotation) // num_cpu
-train_save_dir = '/home/s/chaunm/DATA/AFLW/train_neck_paper_128_4'
-test_save_dir = '/home/s/chaunm/DATA/AFLW/test_neck_paper_128_4'
+train_save_dir = '/home/s/chaunm/DATA/SIDE/train_side_paper_128_4'
+test_save_dir = '/home/s/chaunm/DATA/SIDE/test_side_paper_128_4'
 if os.path.exists(train_save_dir):
     shutil.rmtree(train_save_dir)
     shutil.rmtree(test_save_dir)
@@ -150,16 +151,6 @@ def generate(annot_list, start, end):
             save_dir = train_save_dir
         cv2.imwrite(os.path.join(save_dir, 'images', new_name), image)
         savemat(os.path.join(save_dir, 'annotations', f'{prefix}_{i}.mat'), save_dict)
-        # x = landmark[:, 0].astype(int)
-        # y = landmark[:, 1].astype(int)
-        # for j in range(5):
-        #     point = (x[j], y[j])
-        #     image = cv2.circle(image, point, 1, (255, 255, 0), 2)
-        # hm_save = np.max(heatmap[:, :, :-1], axis=2, keepdims=True)
-        # hm_save = np.concatenate([hm_save, hm_save, hm_save], axis=2)
-        # hm_save = (hm_save * 255.0).astype(np.uint8)
-        # cv2.imwrite(os.path.join(save_dir, f'{i}.png'), np.concatenate([image, hm_save], axis=0))
-        # # print(landmark[:, 2])
 
 
 if __name__ == "__main__":

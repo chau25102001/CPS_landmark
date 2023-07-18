@@ -8,7 +8,17 @@ class MSELoss(nn.Module):
         self.criterion = nn.MSELoss(reduction='none')
 
     def forward(self, logits, gts, mask=None):
+        '''
+        :param logits: b x c x h x w
+        :param gts: b x c x h x w
+        :param mask: b x c x 1
+        :return:
+        '''
         if mask is not None:
+            # mask = mask
+            # # print(mask.shape)
+            # mask = mask.unsqueeze(-1).expand_as(logits)
+            # return torch.sum(self.criterion(logits, gts) * mask) / (torch.sum(mask) + 1)
             return torch.mean(self.criterion(logits, gts) * mask.unsqueeze(-1))
         else:
             return torch.mean(self.criterion(logits, gts))

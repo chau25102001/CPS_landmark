@@ -3,10 +3,10 @@ import shutil
 from pathlib import Path
 import random
 
-train_annot_path = "/home/s/chaunm/DATA/AFLW/train_neck_paper_128_4/annotations"
-test_annot_path = "/home/s/chaunm/DATA/AFLW/test_neck_paper_128_4/annotations"
+train_annot_path = "/home/s/chaunm/DATA/SIDE/train_side_paper_128_4/annotations"
+test_annot_path = "/home/s/chaunm/DATA/SIDE/test_side_paper_128_4/annotations"
 
-save_text_dir = "split_neck_paper"
+save_text_dir = "split_side"
 if os.path.exists(save_text_dir):
     shutil.rmtree(save_text_dir)
 

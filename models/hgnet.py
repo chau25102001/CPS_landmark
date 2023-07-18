@@ -15,7 +15,7 @@ class HGNet(nn.Module):
         _, _, h, w = x.shape
         feat = self.model(x)
         output = self.head(feat[-1])
-        output = F.interpolate(output, (h, w), mode='bilinear')
+        output = F.interpolate(output, (h, w), mode='bilinear', align_corners=True)
         return output, None
 
 

@@ -76,7 +76,7 @@ model = MeanTeacher_CPS(num_classes=config.num_classes,
 
 model = DataParallel(model).to(config.device)
 
-checkpoint_name = "hgnet18_CPS_EMA1_2_5/"
+checkpoint_name = "hgnet18_CPS_EMA1_4_73/"
 checkpoint_path = os.path.join("./log/snapshot", checkpoint_name, 'checkpoint_best.pt')
 checkpoint = torch.load(checkpoint_path, map_location=config.device)
 model.module.load_state_dict(checkpoint['state_dict'])
@@ -99,7 +99,7 @@ for i in pbar:
     data = dataset[i]
     image = data['image']
     heatmap = data['heatmap']  # 20 x H x W
-    mask = data['mask_heatmap'][0]
+    mask = data['mask_heatmap']  # 1x K
     landmark = data['landmark'].astype(int)
     # print(landmark.shape)
     # print(heatmap.shape)
@@ -134,11 +134,11 @@ for i in pbar:
     landmark_pred_2 = heatmap2coordinate(pred2)
     landmark_t_pred_1 = heatmap2coordinate(t_pred1)
     landmark_t_pred_2 = heatmap2coordinate(t_pred2)
-
-    nme1 = evaluator(landmark_pred_1, landmark_gt, None)
-    nme2 = evaluator(landmark_pred_2, landmark_gt, None)
-    nme_t1 = evaluator(landmark_t_pred_1, landmark_gt, None)
-    nme_t2 = evaluator(landmark_t_pred_2, landmark_gt, None)
+    mask = torch.from_numpy(mask).unsqueeze(-1).to(config.device)
+    nme1 = evaluator(landmark_pred_1, landmark_gt, mask)
+    nme2 = evaluator(landmark_pred_2, landmark_gt, mask)
+    nme_t1 = evaluator(landmark_t_pred_1, landmark_gt, mask)
+    nme_t2 = evaluator(landmark_t_pred_2, landmark_gt, mask)
     error = torch.sqrt(torch.sum((landmark_t_pred_1 - landmark_gt) ** 2, dim=-1)) / math.sqrt(
         config.img_height * config.img_width) * 100  # 1, 19
     error_total += error

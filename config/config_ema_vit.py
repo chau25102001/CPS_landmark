@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import print_function
 
 import os
+import pathlib
 import sys
 import time
 import numpy as np
@@ -51,31 +52,37 @@ def get_config(train=True):
     C = edict()
     config = C
 
-    C.seed = 42
-    C.log_dir = "./log"
-    C.mean_teacher = False
-    C.classification = False
-    C.fully_supervised = True
-    assert not (C.mean_teacher and C.fully_supervised), "only one mode allowed"
     '''PATH CONFIG'''
-    C.train_text_labeled = './data/split_side/train_labeled_1_1.txt'
-    C.train_text_unlabeled = './data/split_side/train_unlabeled_1_2.txt'
-    C.test_text = './data/split_side/test.txt'
+    C.seed = 42
+    C.log_dir = "./log_ema_vit"
+    if not os.path.exists(C.log_dir):
+        pathlib.Path(os.path.join(C.log_dir, 'snapshot')).mkdir(parents=True, exist_ok=True)
+    C.train_text_labeled = '/home/s/chaunm/CPS_landmarks/data/split_side/train_labeled_1_4.txt'
+    C.train_text_unlabeled = '/home/s/chaunm/CPS_landmarks/data/split_side/train_unlabeled_1_4.txt'
+    C.test_text = "/home/s/chaunm/CPS_landmarks/data/split_side/test.txt"
     C.train_annotations_path = '/home/s/chaunm/DATA/SIDE/train_side_paper_128_4/annotations'
     C.train_images_path = '/home/s/chaunm/DATA/SIDE/train_side_paper_128_4/images'
     C.test_annotations_path = '/home/s/chaunm/DATA/SIDE/test_side_paper_128_4/annotations'
     C.test_images_path = '/home/s/chaunm/DATA/SIDE/test_side_paper_128_4/images'
-    C.ratio = C.train_text_labeled.split("/")[-1].replace('.txt', '').replace('train_labeled_', '')
+
     '''DATASET CONFIG'''
     C.mean = [0.485, 0.456, 0.406]
     C.std = [0.229, 0.224, 0.225]
-    C.mask_distance = False
+
     '''MODEL CONFIG'''
-
-    C.model = 'hgnet'
-    C.model_size = '18'
-    C.num_classes = 5  # 20 classes including background
-
+    C.encoder_embedding_dim = 768
+    C.decoder_embedding_dim = 512
+    C.encoder_layers = 12
+    C.decoder_layers = 4
+    C.n_heads_encoder_layer = 12
+    C.n_heads_decoder_layer = 16
+    C.patch_size = 8
+    C.num_classes = 5
+    C.freeze_encoder = True
+    # C.pretrained_path = "/home/s/chaunm/CPS_landmarks/MAE/log_mae/snapshot/vit-mae_2/checkpoint_best.pt"
+    # C.pretrained_path = "/home/s/chaunm/CPS_landmarks/MAE/log_mae/snapshot/vit-mae_6/checkpoint_best.pt"  # for 5 points
+    C.pretrained_path = "/home/s/chaunm/CPS_landmarks/MAE/log_mae/snapshot/vit-mae_8/checkpoint_best.pt"  # for 4 points
+    # C.pretrained_path = None
     '''LOSS CONFIG'''
     C.loss = 'mse'
     C.alpha = 2.1
@@ -89,32 +96,27 @@ def get_config(train=True):
     C.class_loss_weight = 1.
     C.use_weighted_mask = False  # for a wing loss
 
-    # assert (C.adaptive_batched and C.threshold_reduction == "none") or (
-    #         not C.adaptive_batched and C.threshold_reduction != "none")  # none only work on batched mode
     '''TRAIN CONFIG'''
     C.img_height = 128
     C.img_width = 128
-    C.radius = 12  # for generating pseudo-label
-    C.train_batch_size = 16
+    C.train_batch_size = 8
     C.test_batch_size = 16
     C.num_workers = 8
-    C.labeled_epoch = 0
-    C.joint_epoch = 60  # 45 for 1/2
     C.lr = 1e-3
+    C.lr_scheduler = 'cosine'
+    C.clip_norm = None  # if freeze encoder = False, reduce lr, warm_up lr, clip norm = 1
     C.weight_decay = 1e-3
-    C.momentum = 0.99
+    C.warm_up_step = 100
+    C.total_epoch = 45
     C.device = 'cuda:0'
-    C.warm_up_epoch = 0
-    C.clip_norm = None
     C.adaptive_filter = False
-    C.apply_function = True
+    C.apply_function = False
     # C.adaptive_batched = True
     C.threshold_reduction = "min"  # mean, min and none
     if C.threshold_reduction == "none":
         C.adaptive_batched = True
     else:
         C.adaptive_batched = False
-    # C.device = 'cpu'
     '''EMA config'''
     C.threshold = 0.7
     C.class_threshold = 0.7
@@ -124,17 +126,7 @@ def get_config(train=True):
     C.ema_linear_epoch = 15  # 5 for 1/8 and 1/4, 10 for 1/2
     C.ema_decay_threshold = 0.9
 
-    if C.fully_supervised:
-        C.mode = 'fully_supervised_' + C.ratio
-    elif C.mean_teacher:
-        C.mode = "CPS_EMA" + C.ratio
-    else:
-        C.mode = "CPS_" + C.ratio
-
-    if C.classification:
-        C.mode += "_classification"
-    C.name = C.model + C.model_size + "_" + C.mode
-
+    C.name = "vit_ema_cps_pretrained" if C.pretrained_path is not None else "vit_ema_cps_from_scratch"
     C.snapshot_dir = os.path.join(C.log_dir, 'snapshot', C.name)
     C.snapshot_dir = makedir(C.snapshot_dir, makedir=train, make_if_exist=True)
     C.name = C.snapshot_dir.split("/")[-1]

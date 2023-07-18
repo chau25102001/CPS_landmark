@@ -1,21 +1,20 @@
-import math
 import os
-
+import termcolor
 import torch
-from torch.nn.utils import clip_grad_norm_
-from torch.nn import DataParallel
-from datasets.aflw import get_train_loader, get_test_loader
-from models.network import SingleNetwork
-from models.hgnet import HGNet
 import torch.optim as optim
-from losses.losses import *
+import wandb
+from torch.nn import DataParallel
 from tqdm import tqdm
-from utils.utils import AverageMeter, NME, Accuracy
 
+from torch.nn.utils import clip_grad_norm_
+from datasets.aflw import get_train_loader, get_test_loader
+from losses.losses import *
+from MAE.decoder_head.UNETR import *
+from utils.utils import AverageMeter, NME
 import wandb
 
 
-class FullySupervisedTrainer:
+class FinetuneTrainer:
     def __init__(self, config):
         self.train_loader = get_train_loader(config, unsupervised=False)
         self.test_loader = get_test_loader(config)
@@ -31,91 +30,84 @@ class FullySupervisedTrainer:
         elif self.config.loss == 'mse':
             self.criterion = MSELoss()
 
-        self.criterion_class = BCELoss()
-        if self.config.model == 'hgnet':
-            self.model = HGNet(num_classes=self.config.num_classes)
-        else:
-            self.model = SingleNetwork(num_classes=self.config.num_classes,
-                                       model_size=self.config.model_size,
-                                       model=self.config.model)
-
+        self.model = get_model_from_pretrained_path(config)
         self.model = DataParallel(self.model).to(self.config.device)
         self.base_lr = self.config.lr
         self.optimizer = optim.AdamW(params=self.model.parameters(),
                                      lr=self.config.lr,
-                                     # alpha=self.config.momentum,
-                                     weight_decay=self.config.weight_decay
-                                     )
-        # self.optimizer = optim.RMSprop(params=self.model.parameters(),
-        #                                lr=self.config.lr,
-        #                                alpha=0.99,
-        #                                weight_decay=self.config.weight_decay)
-        self.lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer,
-                                                                 T_max=self.config.joint_epoch * len(self.train_loader),
-                                                                 eta_min=1e-6)
+                                     weight_decay=self.config.weight_decay)
+        if config.lr_scheduler == 'cosine':
+            self.lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer,
+                                                                     T_max=self.config.total_epoch * len(
+                                                                         self.train_loader),
+                                                                     eta_min=1e-6)
+        elif config.lr_scheduler == 'linear_warm_up':
+            self.lr_scheduler = optim.lr_scheduler.LambdaLR(optimizer=self.optimizer,
+                                                            lr_lambda=lambda step: ((step + 1) / (
+                                                                config.warm_up_step)) if step < config.warm_up_step
+                                                            else 1 - ((step + 1 - config.warm_up_step) / (
+                                                                    config.total_epoch * len(
+                                                                self.train_loader) - config.warm_up_step)))
+        self.warm_up_freeze_epoch = self.config.total_epoch // 4
+        count_train = 0
+        for p in self.model.parameters():
+            if p.requires_grad:
+                count_train += p.numel()
+        print(termcolor.colored(
+            f"training {count_train} parameters, warm up steps: {config.warm_up_step}, total epochs: {config.total_epoch}",
+            'green'))
         self.current_epoch = 0
-        self.evaluator = NME(h=self.config.img_height, w=self.config.img_width)
-        self.evaluator_class = Accuracy(threshold=0.5)
-        wandb.init(project='Fully supervised AFLW-neck', entity='chaunm', resume=False, config=config,
+        self.evaluator = NME(h=self.config.img_height,
+                             w=self.config.img_width)
+        wandb.init(project="Finetune MAE for AFLW", entity='chaunm', resume=False, config=config,
                    name=self.config.name)
 
     def _eval_epoch(self, epoch):
         self.model.eval()
-        pbar = tqdm(self.test_loader, total=len(self.test_loader), desc=f'Eval epoch {epoch + 1}')
+        pbar = tqdm(self.test_loader, total=len(self.test_loader), desc=f"Eval epoch {epoch + 1}")
         loss_meter = AverageMeter()
-        loss_class_meter = AverageMeter()
-
         nme_meter = AverageMeter()
-        acc_meter = AverageMeter()
 
         for batch in pbar:
             image = batch['image'].to(self.config.device)
             heatmap = batch['heatmap'].to(self.config.device)
             mask = batch['mask_heatmap'].squeeze(1).unsqueeze(2).to(self.config.device)  # bsize x (k+1) x 1
-            class_label = batch['mask_heatmap'].squeeze(1)[:, :-1].to(self.config.device)  # bsize x k
             landmark = batch['landmark'].to(self.config.device)
-            with torch.no_grad():
-                heatmap_pred, class_pred = self.model(image)
 
+            with torch.no_grad():
+                heatmap_pred = self.model(image)
                 loss = self.criterion(torch.sigmoid(heatmap_pred), heatmap, mask)
                 nme = self.evaluator(torch.sigmoid(heatmap_pred), landmark, mask=mask[:, :-1, :].squeeze(-1))
 
                 loss_meter.update(loss.item())
                 nme_meter.update(nme.item())
-                if self.config.classification:
-                    loss_class = self.criterion_class(class_pred, class_label)
-                    acc = self.evaluator_class(class_pred, class_label)
 
-                    loss_class_meter.update(loss_class.item())
-                    acc_meter.update(acc.item())
             pbar.set_postfix({
                 "loss": loss_meter.average(),
-                "loss class": loss_class_meter.average(),
-                "nme": nme_meter.average(),
-                "acc": acc_meter.average()
+                "nme": nme_meter.average()
             })
+
         result = {
             "test/loss": loss_meter.average(),
-            "test/loss class": loss_class_meter.average(),
-            "test/nme": nme_meter.average(),
-            "test/acc": acc_meter.average()
+            "test/nme": nme_meter.average()
         }
         for k, v in result.items():
             wandb.log({k: v})
         return result
 
     def _train_epoch(self, epoch):
+        if epoch == self.warm_up_freeze_epoch:
+            print("unfreezing")
+            for p in self.model.parameters():
+                p.requires_grad = True
         self.model.train()
         len_loader = len(self.train_loader)
         pbar = tqdm(enumerate(range(len_loader)), total=len_loader,
-                    desc=f'Train epoch {epoch + 1}/{self.config.joint_epoch}')
+                    desc=f'Train epoch {epoch + 1}/{self.config.total_epoch}')
         data_loader = iter(self.train_loader)
         self.current_epoch = epoch
         loss_meter = AverageMeter()
-        loss_class_meter = AverageMeter()
-
         nme_meter = AverageMeter()
-        acc_meter = AverageMeter()
 
         for i, _ in pbar:
             self.optimizer.zero_grad()
@@ -123,22 +115,14 @@ class FullySupervisedTrainer:
             image = batch['image'].to(self.config.device)
             heatmap = batch['heatmap'].to(self.config.device)
             mask = batch['mask_heatmap'].squeeze(1).unsqueeze(2).to(self.config.device)  # bsize x (k+1) x 1
-            class_label = batch['mask_heatmap'].squeeze(1)[:, :-1].to(self.config.device)  # bsize x k
             landmark = batch['landmark'].to(self.config.device)
 
-            heatmap_pred, class_pred = self.model(image)
+            heatmap_pred = self.model(image)
             loss = self.criterion(torch.sigmoid(heatmap_pred), heatmap, mask)
             nme = self.evaluator(torch.sigmoid(heatmap_pred), landmark, mask=mask[:, :-1, :].squeeze(-1))
 
             loss_meter.update(loss.item())
             nme_meter.update(nme.item())
-            if self.config.classification:
-                loss_class = self.criterion_class(class_pred, class_label)
-                acc = self.evaluator_class(class_pred, class_label)
-
-                loss_class_meter.update(loss_class.item())
-                acc_meter.update(acc.item())
-                loss += loss_class
 
             loss.backward()
             if self.config.clip_norm is not None:
@@ -149,15 +133,11 @@ class FullySupervisedTrainer:
             wandb.log({"lr": lr})
             pbar.set_postfix({
                 "loss": loss_meter.average(),
-                "loss class": loss_class_meter.average(),
                 "nme": nme_meter.average(),
-                "acc": acc_meter.average()
             })
         result = {
             "train/loss": loss_meter.average(),
-            "train/loss class": loss_class_meter.average(),
             "train/nme": nme_meter.average(),
-            "train/acc": acc_meter.average()
         }
         for k, v in result.items():
             wandb.log({k: v})
@@ -186,7 +166,7 @@ class FullySupervisedTrainer:
         if resume:
             self.load_checkpoint()
 
-        for epoch in range(self.current_epoch, self.config.joint_epoch):
+        for epoch in range(self.current_epoch, self.config.total_epoch):
             self._train_epoch(epoch)
             result = self._eval_epoch(epoch)
             score = 0
@@ -196,4 +176,3 @@ class FullySupervisedTrainer:
             if score < best_score:
                 best_score = score
                 self.save_checkpoint('checkpoint_best.pt')
-            # self.save_checkpoint('checkpoint_last.pt')

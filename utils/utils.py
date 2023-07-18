@@ -5,27 +5,24 @@ import torch
 from config.config import get_config
 import torch.nn as nn
 import numpy as np
+import numpy as np
+import random
+import os
 
 
-# config = get_config(train=False)
+def seed_everything(seed):
+    # Set Python random seed
+    random.seed(seed)
 
-def generate_pseudo(heatmap, mask_size):
-    c, h, w = heatmap.size(0), heatmap.size(1), heatmap.size(2)
-    # print(c,h,w)
+    # Set NumPy random seed
+    np.random.seed(seed)
 
-    score, index = torch.max(heatmap.view(c, -1), 1)
-    index_w = index % w
-    index_h = index // h
-
-    mask = torch.zeros_like(heatmap)
-    for i in range(c):
-        mask[i, max(index_h[i] - mask_size, 0):min(index_h[i] + mask_size + 1, h),
-        max(index_w[i] - mask_size, 0):min(index_w[i] + mask_size + 1, w)] = 1
-    pesudo = heatmap * mask
-
-    pesudo = torch.concat([pesudo[:-1, :, :], heatmap[-1, :, :].unsqueeze(0)], dim=0)
-
-    return pesudo
+    # Set PyTorch random seed
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    os.environ["PYTHONHASHSEED"] = str(seed)
 
 
 def generate_gaussian(radius=12, sigma=4):
@@ -50,23 +47,38 @@ def generate_pseudo_label(heatmap, mask):
     score, index = torch.max(heatmap.view(c, -1), 1)
     index_w = (index % w).int()
     index_h = (index // h).int()
-    zero_mask = torch.zeros_like(heatmap, device=heatmap.device, dtype=heatmap.dtype)
-    mask_size = (mask.size(0) - 1) // 2  # radius
+    with torch.no_grad():
+        zero_mask = torch.zeros_like(heatmap, device=heatmap.device, dtype=heatmap.dtype)
+        mask_size = (mask.size(0) - 1) // 2  # radius
 
-    for i in range(c - 1):  # dont generate background
-        h_peak = index_h[i]
-        w_peak = index_w[i]
-        start_y = max(h_peak - mask_size, 0)
-        end_y = min(h_peak + mask_size + 1, h)
-        start_x = max(w_peak - mask_size, 0)
-        end_x = min(w_peak + mask_size + 1, w)
-        print(start_y, end_y, start_x, end_x, i)
-        zero_mask[i, start_y:end_y, start_x:end_x] = mask[
-                                                     mask_size - h_peak + start_y:mask_size - h_peak + end_y,
-                                                     mask_size - w_peak + start_x:mask_size - w_peak + end_x]
-    positive_mask = torch.amax(zero_mask[:-1, :, :], dim=0)
-    zero_mask[-1, :, :] = 1 - positive_mask
+        for i in range(c - 1):  # dont generate background
+            h_peak = index_h[i]
+            w_peak = index_w[i]
+            start_y = max(h_peak - mask_size, 0)
+            end_y = min(h_peak + mask_size + 1, h)
+            start_x = max(w_peak - mask_size, 0)
+            end_x = min(w_peak + mask_size + 1, w)
+            # print(start_y, end_y, start_x, end_x, i)
+            zero_mask[i, start_y:end_y, start_x:end_x] = mask[
+                                                         mask_size - h_peak + start_y:mask_size - h_peak + end_y,
+                                                         mask_size - w_peak + start_x:mask_size - w_peak + end_x]
+        positive_mask = torch.amax(zero_mask[:-1, :, :], dim=0)
+        zero_mask[-1, :, :] = 1 - positive_mask
     return zero_mask
+
+
+def generate_batch_pseudo_label(heatmaps, mask):
+    '''
+
+    :param heatmaps: b x c x h x w
+    :param mask: h x w
+    :return:
+    '''
+    batch_size = heatmaps.size(0)
+    heatmaps_result = heatmaps.clone()
+    for i in range(batch_size):
+        heatmaps_result[i] = generate_pseudo_label(heatmaps[i], mask)
+    return heatmaps_result
 
 
 class AverageMeter(object):
@@ -130,10 +142,6 @@ class InfiniteDataLoader(data.DataLoader):
         return batch
 
 
-# pool = torch.nn.MaxPool1d(kernel_size=config.img_height * config.img_width, stride=config.img_height * config.img_width,
-#                           return_indices=True)
-
-
 def heatmap2coordinate(heatmap):
     '''heatmap: Bsize x (K+1) x H x W'''
     b, k, h, w = heatmap.shape
@@ -153,13 +161,59 @@ def local_filter(logits, confidence_threshold=0.7):
 
     :param logits: Tensor(bsize x (K + 1) x H x W)
     :param confidence_threshold: float
-    :return: mask: Tensor(bsize x K)
+    :return: mask: Tensor(bsize x (K+1) x 1)
     '''
     b, k, h, w = logits.shape
     logits = logits.view(b, k, -1)
     max_values, _ = torch.max(logits, dim=-1, keepdim=True)  # bsize x (K + 1) x 1
     mask = torch.where(max_values >= confidence_threshold, 1., 0.)
-    return mask
+    # mask[:, -1, :] = 0  # mask bg
+    return mask, torch.mean(max_values, dim=0).squeeze(-1)
+
+
+def scale_function(input):
+    '''
+    :param input: tensor b x (k+1) x 1
+    :return:
+    '''
+    input = 4 * (-input + 0.5)
+    input = 1 / (1 + torch.exp(input))
+    return input
+
+
+def adaptive_local_filter(logits, adaptive_threshold, apply_function=None):
+    '''
+    :param logits: Tensor(bsize x (K + 1) x H x W)
+    :param adaptive_threshold: Tensor(1 x (K + 1) x 1)
+    :return: mask: Tensor(bsize x (K+1) x 1)
+    '''
+    b, k, h, w = logits.shape
+    logits = logits.view(b, k, -1)
+    max_values, _ = torch.max(logits, dim=-1, keepdim=True)  # bsize x (K + 1) x 1
+    if apply_function is not None:
+        adaptive_threshold = apply_function(adaptive_threshold)
+    # adaptive_threshold = torch.maximum(adaptive_threshold, 0.5)
+    mask = torch.gt(max_values, adaptive_threshold)
+    # mask[:, -1, :] = 0  # always filter background
+    return mask.float()
+
+
+def get_theshold(logits, reduction='min'):  # spatial max, min over batch
+    b, k, h, w = logits.shape
+    background_thres = 1 - torch.amin(logits[:, :-1, :, :], dim=1)  # bsize x H x W
+    background_thres = background_thres.view(b, -1)  # bsize x (H x W)
+    background_thres = torch.amin(background_thres, dim=-1, keepdim=True)  # bsize  x 1
+    logits = logits.view(b, k, -1)
+    threshold, _ = torch.max(logits, dim=-1, keepdim=True)  # bsize x (K + 1) x 1
+    threshold[:, -1, :] = background_thres
+    if reduction == 'min':
+        threshold = torch.amin(threshold, dim=0, keepdim=True)
+    elif reduction == 'max':
+        threshold = torch.amax(threshold, dim=0, keepdim=True)
+    elif reduction == 'mean':
+        threshold = torch.mean(threshold, dim=0, keepdim=True)
+    threshold = torch.where(threshold > 0.5, threshold, torch.tensor(0.5, dtype=torch.float32, device=threshold.device))
+    return threshold
 
 
 class Accuracy(torch.nn.Module):
@@ -187,7 +241,7 @@ class NME(torch.nn.Module):
 
         :param pred: bsize x k x 2
         :param gt: bsize x k x 2
-        :param mask: bsize x k
+        :param mask: bsize x k x 1
         :return: NME loss
         '''
         if len(pred.shape) == 4:  # heatmap
@@ -202,7 +256,7 @@ class NME(torch.nn.Module):
 
         loss = torch.sqrt(torch.sum((pred - gt) ** 2, dim=-1)) * mask / math.sqrt(self.w * self.h)
         loss = torch.sum(loss, dim=1) / norm * 100  # mean over num keypoints
-        return torch.mean(loss)
+        return torch.mean(loss)  # mean over batch
 
 
 def freeze_bn(model: torch.nn.Module):
