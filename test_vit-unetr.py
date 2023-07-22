@@ -7,7 +7,7 @@ import numpy as np
 import cv2
 import shutil
 import torch
-from utils.utils import heatmap2coordinate, NME, AverageMeter
+from utils.utils import heatmap2coordinate, NME, AverageMeter, merge_dict
 import warnings
 from argparse import ArgumentParser
 from tqdm import tqdm
@@ -17,9 +17,19 @@ import math
 
 parser = ArgumentParser(description="testing")
 parser.add_argument("--mode", type=str, default='joint', help='joint or channel')
+parser.add_argument("--checkpoint_path", type=str, help="path to checkpoint .pt file")
+parser.add_argument("--test_text", type=str, help="path to test text file, containing test annotation file names")
+parser.add_argument("--test_annotation_path", type=str, help="path to the test annotation folder")
+parser.add_argument("--test_images_path", type=str, help="path to the test images")
+parser.add_argument("--num_classes", type=int,
+                    help="number of keypoint + 1, either 20 for AFLW-19, 6 for AFLW-DA, or 5 for SideFace-DA")
+
 args = parser.parse_args()
 warnings.filterwarnings('ignore')
 config = get_config(train=False)
+
+config = merge_dict(config, args)
+config.pretrained_path = None # dont need to load pretrained
 dataset = AFLW(config.test_text,
                config.test_annotations_path,
                config.test_images_path,
@@ -29,9 +39,9 @@ dataset = AFLW(config.test_text,
                std=config.std)
 
 model = get_model_from_pretrained_path(config).to(config.device)
-checkpoint_name = "vit-unetr-pretrained_17"
-checkpoint_path = os.path.join("./log_vit/snapshot", checkpoint_name, 'checkpoint_best.pt')
-checkpoint = torch.load(checkpoint_path, map_location=config.device)
+# checkpoint_name = "vit-unetr-pretrained_17"
+# checkpoint_path = os.path.join("./log_vit/snapshot", checkpoint_name, 'checkpoint_best.pt')
+checkpoint = torch.load(args.checkpoint_path, map_location=config.device)
 model.load_state_dict(checkpoint['state_dict'])
 model.eval()
 
@@ -43,7 +53,7 @@ if os.path.exists(save_dir):
 os.mkdir(save_dir)
 l = len(dataset)
 index = list(range(l))
-pbar = tqdm(index, total=len(index), desc=f'Testing {checkpoint_name}')
+pbar = tqdm(index, total=len(index), desc=f'Testing ')
 error_total = torch.zeros((1, config.num_classes - 1), device=config.device)
 for i in pbar:
     data = dataset[i]
@@ -114,4 +124,4 @@ for i in pbar:
 
             cv2.imwrite(os.path.join(save_dir, f"{i}.png"), save)
     pbar.set_postfix({"NME": nme_meter1.average()})
-print(colored(f"{checkpoint_name}: {nme_meter1.average()}", 'red'))
+print(colored(f"NME: {nme_meter1.average()}", 'red'))

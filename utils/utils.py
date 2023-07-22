@@ -1,3 +1,4 @@
+import argparse
 import math
 
 import torch.utils.data as data
@@ -271,6 +272,16 @@ def unfreeze_bn(model: torch.nn.Module):
         if isinstance(m, nn.BatchNorm2d):
             m.track_running_stats = True
             m.train()
+
+
+def merge_dict(config, args):
+    if isinstance(args, argparse.Namespace):
+        args = vars(args)  # convert to dictionary
+    for k, v in args.items():
+        if k in config.keys():
+            if args[k] is not None:
+                config[k] = v
+    return config
 
 
 if __name__ == "__main__":

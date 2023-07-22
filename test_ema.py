@@ -16,51 +16,23 @@ import warnings
 from argparse import ArgumentParser
 from tqdm import tqdm
 from termcolor import colored
-import torch.nn.functional as F
+from utils.utils import merge_dict
 
 parser = ArgumentParser(description="testing")
 parser.add_argument("--mode", type=str, default='joint', help='joint or channel')
+parser.add_argument("--checkpoint_path", type=str, help="path to checkpoint .pt file")
+parser.add_argument("--test_text", type=str, help="path to test text file, containing test annotation file names")
+parser.add_argument("--test_annotation_path", type=str, help="path to the test annotation folder")
+parser.add_argument("--test_images_path", type=str, help="path to the test images")
+parser.add_argument("--num_classes", type=int,
+                    help="number of keypoint + 1, either 20 for AFLW-19, 6 for AFLW-DA, or 5 for SideFace-DA")
+
 args = parser.parse_args()
 warnings.filterwarnings('ignore')
 config = get_config(train=False)
-
-
+config = merge_dict(config, args)
 # config.device = 'cpu'
 # print(config.device)
-
-def soft_argmax(heatmap):
-    """
-    Apply soft argmax on a given heatmap tensor to compute landmark coordinates.
-    Args:
-        heatmap: PyTorch tensor of shape B x C x H x W representing the heatmap.
-    Returns:
-        landmark: PyTorch tensor of shape B x C x 2 representing the landmark coordinates.
-    """
-    device = heatmap.device
-    # print(heatmap.shape)
-    batch_size, channels, height, width = heatmap.shape
-    softmax = F.softmax(heatmap.view(batch_size, channels, -1) * 128 * 128, dim=-1).view(batch_size, channels, height,
-                                                                                         width)
-
-    indices_kernel = torch.arange(start=0, end=height * width).unsqueeze(0).view(height
-                                                                                 , width)
-    # Create a grid of coordinates
-    conv = softmax * indices_kernel
-    indices = conv.sum(2).sum(2)  # B x C
-    # print(indices)
-    # x_coords = torch.linspace(0, 1, width, device=device).view(1, 1, 1, width).expand(batch_size, -1, height, -1)
-    # y_coords = torch.linspace(0, 1, height, device=device).view(1, 1, height, 1).expand(batch_size, -1, -1, width)
-    #
-    # # Compute the expected x and y coordinates
-    # expected_x = torch.sum(x_coords * softmax, dim=(2, 3)).unsqueeze(-1)
-    # expected_y = torch.sum(y_coords * softmax, dim=(2, 3)).unsqueeze(-1)
-    expected_x = indices % width
-    expected_y = indices.floor() / height
-    # Concatenate the expected x and y coordinates to get the landmark coordinates
-    landmark = torch.cat([expected_x.unsqueeze(-1), expected_y.unsqueeze(-1)], dim=2)
-    # print(landmark.shape)
-    return landmark
-
 
 dataset = AFLW(config.test_text,
                config.test_annotations_path,
@@ -76,9 +48,9 @@ model = MeanTeacher_CPS(num_classes=config.num_classes,
 
 model = DataParallel(model).to(config.device)
 
-checkpoint_name = "hgnet18_CPS_EMA1_4_73/"
-checkpoint_path = os.path.join("./log/snapshot", checkpoint_name, 'checkpoint_best.pt')
-checkpoint = torch.load(checkpoint_path, map_location=config.device)
+# checkpoint_name = "hgnet18_CPS_EMA1_4_73/"
+# checkpoint_path = os.path.join("./log/snapshot", checkpoint_name, 'checkpoint_best.pt')
+checkpoint = torch.load(args.checkpoint_path, map_location=config.device)
 model.module.load_state_dict(checkpoint['state_dict'])
 model.eval()
 
@@ -93,7 +65,7 @@ if os.path.exists(save_dir):
 os.mkdir(save_dir)
 l = len(dataset)
 index = list(range(l))
-pbar = tqdm(index, total=len(index), desc=f'Testing {checkpoint_name}')
+pbar = tqdm(index, total=len(index), desc=f'Testing')
 error_total = torch.zeros((1, config.num_classes - 1), device=config.device)
 for i in pbar:
     data = dataset[i]
@@ -196,6 +168,6 @@ for i in pbar:
             cv2.imwrite(os.path.join(save_dir, f"{i}.png"), save)
     pbar.set_postfix({"NME": [nme_meter1.average(), nme_meter2.average()]})
 print(colored(
-    f"{checkpoint_name}: {nme_meter1.average()}, {nme_meter2.average()}, {nme_meter_t1.average()}, {nme_meter_t2.average()}",
+    f"NME: {nme_meter1.average()}, {nme_meter2.average()}, {nme_meter_t1.average()}, {nme_meter_t2.average()}",
     'red'))
 print(error_total / l)

@@ -56,7 +56,16 @@ def get_config(train=True):
     C.mean_teacher = False
     C.classification = False
     C.fully_supervised = True
-    assert not (C.mean_teacher and C.fully_supervised), "only one mode allowed"
+    if C.fully_supervised and C.mean_teacher:
+        print("only one mode is allowed, either fully_supervised or mean_teacher, switching to mean teacher by default")
+        C.mean_teacher = True
+        C.fully_supervised = False
+    elif not C.fully_supervised and not C.mean_teacher:
+        print(
+            "must specify at least one mode, either fully_supervised or mean_teacher, switching to mean teacher by default")
+        C.mean_teacher = True
+        C.fully_supervised = False
+
     '''PATH CONFIG'''
     C.train_text_labeled = './data/split_side/train_labeled_1_1.txt'
     C.train_text_unlabeled = './data/split_side/train_unlabeled_1_2.txt'
