@@ -1,7 +1,6 @@
 # Semi-supervise learning For Landmark Detection
 
 - This project is about applying semi-supervise deep learning technique for landmark detection.
-  Currently, only facial landmark detection on **ALFW** dataset is available
 - The repo is based on Cross Pseudo Supervision: https://github.com/charlesCXK/TorchSemiSeg
 
 # Getting started
@@ -175,4 +174,21 @@ For MAE training, refer to MAE/train_mae.py
   ```
 
 # Pretrained weights
+We provide the pretrained weight for fully-supervised hourglass models and MAE encoders on 3 datasets
 
+- Hourglass models:
+
+| Dataset     |                                       Download link                                        |
+|-------------|:------------------------------------------------------------------------------------------:|
+| AFLW-19     |  [GD](https://drive.google.com/file/d/1H7GZAUcuCPZVYHexPLUBV5ulHxf2EHWB/view?usp=sharing)  |
+| AFLW-DA     |  [GD](https://drive.google.com/file/d/1lbT6i5iSiRdLp-TkuuWytqWrs4dvmcx8/view?usp=sharing)  |
+| SideFace-DA |  [GD](https://drive.google.com/file/d/1q52FCRTNGnPMG0nHPjYKKpZorYQD7OgG/view?usp=sharing)  |
+
+- MAE encoders:
+
+
+| Dataset     |                                       Download link                                        |
+|-------------|:------------------------------------------------------------------------------------------:|
+| AFLW-19     |  [GD](https://drive.google.com/file/d/1Td8jr-zzjoJ6RvfQyN8EirGViSzjLhbk/view?usp=sharing)  |
+| AFLW-DA     |  [GD](https://drive.google.com/file/d/1iKTzN1yH-HRiBY4aG4X1u4CnmXOKedvc/view?usp=sharing)  |
+| SideFace-DA |  [GD](https://drive.google.com/file/d/1dlpJ4-6qWz8X0ih6asLTj-CKmL5sDcfo/view?usp=sharing)  |
