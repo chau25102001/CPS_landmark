@@ -15,10 +15,10 @@ import wandb
 
 class Trainer:
     def __init__(self, config):
-        self.labeled_train_loader = get_train_loader(unsupervised=False)
-        self.unlabeled_train_loader = get_train_loader(unsupervised=True)
+        self.labeled_train_loader = get_train_loader(config, unsupervised=False)
+        self.unlabeled_train_loader = get_train_loader(config, unsupervised=True)
         self.len_loader = max(len(self.labeled_train_loader), len(self.unlabeled_train_loader))
-        self.test_loader = get_test_loader()
+        self.test_loader = get_test_loader(config)
         self.config = config
         if self.config.loss == 'awing':
             self.criterion = AdaptiveWingLoss(alpha=self.config.alpha,
