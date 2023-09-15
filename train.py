@@ -8,7 +8,7 @@ from utils.utils import seed_everything, merge_dict
 
 parser = ArgumentParser(description='CPS for AFLW')
 parser.add_argument("--resume", action='store_true', default=False, help='resume training from last checkpoint')
-parser.add_argument("--mean_teacher", action='store_true', default=False, help="use mean teacher or not")
+parser.add_argument("--mean_teacher", action='store_true', default=True, help="use mean teacher or not")
 parser.add_argument("--fully_supervised", action="store_true", default=False, help="train fully supervised")
 parser.add_argument("--train_text_labeled", type=str, help="path to labeled train text file")
 parser.add_argument("--train_text_unlabeled", type=str, help="path to unlabeled train text file")
